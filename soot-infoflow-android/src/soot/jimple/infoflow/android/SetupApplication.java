@@ -82,6 +82,7 @@ import soot.jimple.infoflow.taintWrappers.ITaintPropagationWrapper;
 import soot.jimple.infoflow.taintWrappers.ITaintWrapperDataFlowAnalysis;
 import soot.jimple.infoflow.util.SystemClassHandler;
 import soot.jimple.infoflow.values.IValueProvider;
+import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.options.Options;
 import soot.util.HashMultiMap;
 import soot.util.MultiMap;
@@ -598,6 +599,8 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		// Construct the actual callgraph
 		logger.info("Constructing the callgraph...");
 		PackManager.v().getPack("cg").apply();
+		CallGraph cg = AngrCallgraph.newCallgraph();
+		Scene.v().setCallGraph(cg);
 
 		// ICC instrumentation
 		if (iccInstrumenter != null)
