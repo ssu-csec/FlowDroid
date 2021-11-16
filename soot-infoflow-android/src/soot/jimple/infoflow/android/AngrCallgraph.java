@@ -5,24 +5,27 @@ import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 import soot.*;
-import soot.jimple.AssignStmt;
-import soot.jimple.InvokeExpr;
-import soot.jimple.InvokeStmt;
-import soot.jimple.Stmt;
+import soot.javaToJimple.LocalGenerator;
+import soot.jimple.*;
 import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.jimple.toolkits.callgraph.Edge;
 
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.LinkedList;
-import java.util.List;
+import java.nio.file.StandardOpenOption;
+import java.util.*;
 
 public class AngrCallgraph {
+    static String dummyClassName = "nativemethod";
+    static CallGraph cg;
 
     public static CallGraph newCallgraph(){
+        cg = Scene.v().getCallGraph();
+        loadDummyNodes();
         //CallGraph cg = new CallGraph();
-        CallGraph cg = Scene.v().getCallGraph();
         List<Edge> edges = getEdges();
         assert edges != null;
 
@@ -31,6 +34,127 @@ public class AngrCallgraph {
         }
 
         return cg;
+    }
+    public static void loadDummyNodes(){
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(Paths.get("C:\\Users\\msec\\AndroidStudioProjects\\ActivityCommunication31\\app\\build\\outputs\\apk\\debug\\fulltest.dummy.json"));
+        } catch (IOException ioe){
+            ioe.printStackTrace();
+            return;
+        }
+
+        String str = new String(bytes);
+        parseNodes(str);
+    }
+    public static void parseNodes(String jsonStr){
+        JSONParser jp = new JSONParser();
+        JSONArray ja = null;
+
+        SootClass nativeClass = Scene.v().getSootClassUnsafe(dummyClassName);
+        nativeClass.setApplicationClass();
+        try {
+            ja = (JSONArray) jp.parse(jsonStr);
+        } catch (ParseException ignored){
+        }
+
+        if(ja == null){
+            return;
+        }
+
+        for (Object edgeInfo : ja) {
+            JSONObject jo = (JSONObject) edgeInfo;
+            // get method from class with params and ret
+            SootMethod sootMethod = getMethod(jo);
+
+            // load body
+            JimpleBody body = Jimple.v().newBody();
+            sootMethod.setModifiers(Modifier.PUBLIC);       // To avoid concrete
+            body.setMethod(sootMethod);
+
+            loadBody(jo, body, sootMethod, nativeClass);
+            sootMethod.setActiveBody(body);
+            //appendSinks(nativeClass);
+        }
+    }
+    public static SootMethod getMethod(JSONObject jo){
+        String className = (String) jo.get("class");
+        String methodName = (String) jo.get("name");
+        String retType = (String) jo.get("ret");
+        String params = (String) jo.get("params");
+        String subSig = retType + " " + methodName + params;
+
+        SootClass sootClass = Scene.v().getSootClassUnsafe(className);
+        return sootClass.getMethod(subSig);
+    }
+    public static void loadBody(JSONObject jo, JimpleBody body, SootMethod sootMethod, SootClass nativeClass){
+        LocalGenerator lg = new LocalGenerator(body);
+        List<JSONObject> stmtList = (List<JSONObject>) jo.get("body");
+        List<Local> localList = new LinkedList<Local>();
+
+        Local thisLocal = lg.generateLocal(sootMethod.getDeclaringClass().getType());
+        body.getUnits().add(Jimple.v().newIdentityStmt(thisLocal, Jimple.v().newThisRef(sootMethod.getDeclaringClass().getType())));
+        for (JSONObject stmt : stmtList){
+            String stmtType = (String) stmt.get("type");
+            if(stmtType.equals("assign")){
+                int local = Long.valueOf((long) stmt.get("local")).intValue();
+
+                Type paramType = sootMethod.getParameterType(local);
+                Local paramLocal = lg.generateLocal(paramType);
+                ParameterRef paramRef = Jimple.v().newParameterRef(paramType, local);
+                localList.add(paramLocal);
+                body.getUnits().add(Jimple.v().newIdentityStmt(paramLocal, paramRef));
+
+            }
+            else if(stmtType.equals("invoke")){
+                final InvokeExpr invokeExpr;
+                String callee = (String) stmt.get("callee");
+                List<Long> argsInfo = (List<Long>) stmt.get("args");
+                List<Value> args = new LinkedList<Value>();
+                List<Type> argTypes = new LinkedList<Type>();
+                for (long argLong : argsInfo) {
+                    int argInt = Long.valueOf(argLong).intValue();
+                    Local paramLocal = localList.get(argInt);
+                    argTypes.add(paramLocal.getType());
+                    args.add(paramLocal);
+                }
+
+                SootMethod calleeMethod = nativeClass.getMethodByNameUnsafe(callee);
+                if (calleeMethod == null) {
+                    calleeMethod = Scene.v().makeSootMethod(callee, argTypes, VoidType.v());
+                    calleeMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
+                    nativeClass.addMethod(calleeMethod);
+                    JimpleBody emptyBody = Jimple.v().newBody();
+                    emptyBody.setMethod(calleeMethod);
+                    emptyBody.getUnits().add(Jimple.v().newReturnVoidStmt());
+                    Local sinkLocal = lg.generateLocal(nativeClass.getType());
+                    emptyBody.getUnits().add(Jimple.v().newIdentityStmt(sinkLocal, Jimple.v().newThisRef(nativeClass.getType())));
+                    calleeMethod.setActiveBody(emptyBody);
+                }
+
+                invokeExpr = Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
+                Stmt statement;
+                statement = Jimple.v().newInvokeStmt(invokeExpr);
+                body.getUnits().add(statement);
+
+                Edge edge = new Edge(sootMethod, statement, calleeMethod, Kind.STATIC);
+                cg.addEdge(edge);
+            }
+        }
+        body.getUnits().add(Jimple.v().newReturnVoidStmt());
+    }
+    public static void appendSinks(SootClass nativeClass){
+        String sourceSinkPath = "F:\\연구실\\중견\\개발\\fd\\FlowDroid\\soot-infoflow-android\\SourcesAndSinks.txt";
+        for (SootMethod method : nativeClass.getMethods()){
+            String sig = method.getSignature();
+            String sink = sig + " -> _SINK_";
+            // Todo: Check sink in text file
+            try {
+                Files.write(Paths.get(sourceSinkPath), sink.getBytes(), StandardOpenOption.APPEND);
+            }catch (IOException e) {
+                //exception handling left as an exercise for the reader
+            }
+        }
     }
     public static List<Edge> getEdges(){
         byte[] bytes;
@@ -42,10 +166,9 @@ public class AngrCallgraph {
         }
 
         String str = new String(bytes);
-        return parse(str);
+        return parseEdges(str);
     }
-    public static List<Edge> parse(String jsonStr) {
-        boolean b = true;
+    public static List<Edge> parseEdges(String jsonStr) {
         JSONParser jp = new JSONParser();
         JSONArray ja = null;
 
@@ -107,14 +230,14 @@ public class AngrCallgraph {
         return Scene.v().getMethod(methodSig);
     }
 
-    public static Stmt getStmt(SootMethod method, long invokeIdx) {
-        Body body = method.getActiveBody();
+    public static Stmt getStmt(SootMethod sootMethod, long invokeIdx) {
+        Body body = sootMethod.getActiveBody();
         UnitPatchingChain units = body.getUnits();
         return traverseStmt(units, invokeIdx);
     }
 
-    public static boolean isServiceCallback(SootMethod method){
-        switch(method.getName()){
+    public static boolean isServiceCallback(SootMethod sootMethod){
+        switch(sootMethod.getName()){
             case("onPreExecute"):
             case("doInBackground"):
             case("onProgressUpdate"):
