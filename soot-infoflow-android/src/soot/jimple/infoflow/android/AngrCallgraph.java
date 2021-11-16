@@ -52,6 +52,7 @@ public class AngrCallgraph {
         JSONArray ja = null;
 
         SootClass nativeClass = Scene.v().getSootClassUnsafe(dummyClassName);
+        nativeClass.setModifiers(9);
         nativeClass.setApplicationClass();
         try {
             ja = (JSONArray) jp.parse(jsonStr);
@@ -123,13 +124,8 @@ public class AngrCallgraph {
                 if (calleeMethod == null) {
                     calleeMethod = Scene.v().makeSootMethod(callee, argTypes, VoidType.v());
                     calleeMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
+                    calleeMethod.setPhantom(true);
                     nativeClass.addMethod(calleeMethod);
-                    JimpleBody emptyBody = Jimple.v().newBody();
-                    emptyBody.setMethod(calleeMethod);
-                    emptyBody.getUnits().add(Jimple.v().newReturnVoidStmt());
-                    Local sinkLocal = lg.generateLocal(nativeClass.getType());
-                    emptyBody.getUnits().add(Jimple.v().newIdentityStmt(sinkLocal, Jimple.v().newThisRef(nativeClass.getType())));
-                    calleeMethod.setActiveBody(emptyBody);
                 }
 
                 invokeExpr = Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
@@ -144,7 +140,7 @@ public class AngrCallgraph {
         body.getUnits().add(Jimple.v().newReturnVoidStmt());
     }
     public static void appendSinks(SootClass nativeClass){
-        String sourceSinkPath = "F:\\연구실\\중견\\개발\\fd\\FlowDroid\\soot-infoflow-android\\SourcesAndSinks.txt";
+        String sourceSinkPath = "F:\\연구실\\중견\\개발\\fd\\FlowDroid\\SourcesAndSinks.txt";
         for (SootMethod method : nativeClass.getMethods()){
             String sig = method.getSignature();
             String sink = sig + " -> _SINK_";
