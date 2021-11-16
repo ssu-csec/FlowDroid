@@ -10,13 +10,12 @@ import soot.jimple.*;
 import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.jimple.toolkits.callgraph.Edge;
 
-import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
+import java.util.stream.Stream;
 
 public class AngrCallgraph {
     static String dummyClassName = "nativemethod";
@@ -75,7 +74,7 @@ public class AngrCallgraph {
 
             loadBody(jo, body, sootMethod, nativeClass);
             sootMethod.setActiveBody(body);
-            //appendSinks(nativeClass);
+            appendSinks(nativeClass);
         }
     }
     public static SootMethod getMethod(JSONObject jo){
@@ -141,16 +140,38 @@ public class AngrCallgraph {
     }
     public static void appendSinks(SootClass nativeClass){
         String sourceSinkPath = "F:\\연구실\\중견\\개발\\fd\\FlowDroid\\SourcesAndSinks.txt";
+        boolean haveToExit = false;
         for (SootMethod method : nativeClass.getMethods()){
             String sig = method.getSignature();
             String sink = sig + " -> _SINK_";
             // Todo: Check sink in text file
+
+            if(isExistsInFile(sourceSinkPath, sink)){
+                continue;
+            }
+
             try {
-                Files.write(Paths.get(sourceSinkPath), sink.getBytes(), StandardOpenOption.APPEND);
+                Files.write(Paths.get(sourceSinkPath), ("\n" + sink).getBytes(), StandardOpenOption.APPEND);
+                haveToExit = true;
             }catch (IOException e) {
                 //exception handling left as an exercise for the reader
             }
         }
+        if(haveToExit){
+            System.exit(777);
+        }
+    }
+    public static boolean isExistsInFile(String sourceSinkPath, String sink){
+        try (Stream<String> stream = Files.lines(Paths.get(sourceSinkPath))) {
+            Optional<String> lineHavingTarget = stream.filter(l -> l.contains(sink)).findFirst();
+            if(lineHavingTarget.isPresent()){
+                return true;
+            }
+            // do whatever
+        } catch (IOException e) {
+            // log exception
+        }
+        return false;
     }
     public static List<Edge> getEdges(){
         byte[] bytes;
