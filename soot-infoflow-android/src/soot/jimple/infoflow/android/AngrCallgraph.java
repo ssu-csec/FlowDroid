@@ -10,7 +10,7 @@ import soot.jimple.*;
 import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.jimple.toolkits.callgraph.Edge;
 
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
@@ -21,32 +21,45 @@ public class AngrCallgraph {
     static String dummyClassName = "nativemethod";
     static CallGraph cg;
 
-    public static CallGraph newCallgraph(){
+    public static CallGraph newCallgraph() {
+        String curPath = Paths.get(".").toAbsolutePath().normalize().toString();
+        File fileInDirectory = new File(curPath, "json_hint.txt");
+        String dummyNodePath = null;
+        String callGraphPath = null;
+        String sourceSinkPath = null;
+        try {
+            BufferedReader br = new BufferedReader(new FileReader(fileInDirectory.getAbsoluteFile()));
+            dummyNodePath = br.readLine();
+            callGraphPath = br.readLine();
+            sourceSinkPath = br.readLine();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
         cg = Scene.v().getCallGraph();
-        loadDummyNodes();
+        loadDummyNodes(dummyNodePath, sourceSinkPath);
         //CallGraph cg = new CallGraph();
-        List<Edge> edges = getEdges();
+        List<Edge> edges = getEdges(callGraphPath);
         assert edges != null;
 
-        for(Edge edge: edges) {
+        for (Edge edge : edges) {
             cg.addEdge(edge);
         }
 
         return cg;
     }
-    public static void loadDummyNodes(){
+    public static void loadDummyNodes(String dummNodePath, String sourceSinkPath){
         byte[] bytes;
         try {
-            bytes = Files.readAllBytes(Paths.get("C:\\Users\\msec\\AndroidStudioProjects\\ActivityCommunication31\\app\\build\\outputs\\apk\\debug\\fulltest.dummy.json"));
+            bytes = Files.readAllBytes(Paths.get(dummNodePath));
         } catch (IOException ioe){
             ioe.printStackTrace();
             return;
         }
 
         String str = new String(bytes);
-        parseNodes(str);
+        parseNodes(str, sourceSinkPath);
     }
-    public static void parseNodes(String jsonStr){
+    public static void parseNodes(String jsonStr, String sourceSinkPath){
         JSONParser jp = new JSONParser();
         JSONArray ja = null;
 
@@ -74,7 +87,7 @@ public class AngrCallgraph {
 
             loadBody(jo, body, sootMethod, nativeClass);
             sootMethod.setActiveBody(body);
-            appendSinks(nativeClass);
+            appendSinks(nativeClass, sourceSinkPath);
         }
     }
     public static SootMethod getMethod(JSONObject jo){
@@ -138,8 +151,7 @@ public class AngrCallgraph {
         }
         body.getUnits().add(Jimple.v().newReturnVoidStmt());
     }
-    public static void appendSinks(SootClass nativeClass){
-        String sourceSinkPath = "F:\\연구실\\중견\\개발\\fd\\FlowDroid\\SourcesAndSinks.txt";
+    public static void appendSinks(SootClass nativeClass, String sourceSinkPath){
         boolean haveToExit = false;
         for (SootMethod method : nativeClass.getMethods()){
             String sig = method.getSignature();
@@ -173,10 +185,10 @@ public class AngrCallgraph {
         }
         return false;
     }
-    public static List<Edge> getEdges(){
+    public static List<Edge> getEdges(String callGraphPath){
         byte[] bytes;
         try {
-            bytes = Files.readAllBytes(Paths.get("C:\\Users\\msec\\AndroidStudioProjects\\ActivityCommunication31\\app\\build\\outputs\\apk\\debug\\callgraph.json"));
+            bytes = Files.readAllBytes(Paths.get(callGraphPath));
         } catch (IOException ioe){
             ioe.printStackTrace();
             return null;
