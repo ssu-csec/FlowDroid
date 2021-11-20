@@ -23,22 +23,41 @@ public class AngrCallgraph {
 
     public static CallGraph newCallgraph() {
         String curPath = Paths.get(".").toAbsolutePath().normalize().toString();
-        File fileInDirectory = new File(curPath, "json_hint.txt");
-        String dummyNodePath = null;
-        String callGraphPath = null;
+        File fileInDirectory = new File(curPath, "path_hint.txt");
+        String jsonPath = null;
         String sourceSinkPath = null;
         try {
             BufferedReader br = new BufferedReader(new FileReader(fileInDirectory.getAbsoluteFile()));
-            dummyNodePath = br.readLine();
-            callGraphPath = br.readLine();
+            jsonPath = br.readLine();
             sourceSinkPath = br.readLine();
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        byte[] jsonBytes;
+        try {
+            assert jsonPath != null;
+            jsonBytes = Files.readAllBytes(Paths.get(jsonPath));
+        } catch (IOException ioe){
+            ioe.printStackTrace();
+            return null;
+        }
+
+        String jsonStr = new String(jsonBytes);
+        JSONParser jp = new JSONParser();
+        JSONArray nodesJson = null;
+        JSONArray edgesJson = null;
+        try {
+            JSONObject jo = (JSONObject) jp.parse(jsonStr);
+            nodesJson = (JSONArray) jo.get("nodes");
+            edgesJson = (JSONArray) jo.get("edges");
+        } catch(ParseException ignored){
+        }
+
         cg = Scene.v().getCallGraph();
-        loadDummyNodes(dummyNodePath, sourceSinkPath);
+        loadDummyNodes(nodesJson, sourceSinkPath);
         //CallGraph cg = new CallGraph();
-        List<Edge> edges = getEdges(callGraphPath);
+        List<Edge> edges = parseEdges(edgesJson);
         assert edges != null;
 
         for (Edge edge : edges) {
@@ -47,35 +66,16 @@ public class AngrCallgraph {
 
         return cg;
     }
-    public static void loadDummyNodes(String dummNodePath, String sourceSinkPath){
-        byte[] bytes;
-        try {
-            bytes = Files.readAllBytes(Paths.get(dummNodePath));
-        } catch (IOException ioe){
-            ioe.printStackTrace();
+    public static void loadDummyNodes(JSONArray nodes, String sourceSinkPath){
+        if(nodes == null){
             return;
         }
-
-        String str = new String(bytes);
-        parseNodes(str, sourceSinkPath);
-    }
-    public static void parseNodes(String jsonStr, String sourceSinkPath){
-        JSONParser jp = new JSONParser();
-        JSONArray ja = null;
 
         SootClass nativeClass = Scene.v().getSootClassUnsafe(dummyClassName);
         nativeClass.setModifiers(9);
         nativeClass.setApplicationClass();
-        try {
-            ja = (JSONArray) jp.parse(jsonStr);
-        } catch (ParseException ignored){
-        }
 
-        if(ja == null){
-            return;
-        }
-
-        for (Object edgeInfo : ja) {
+        for (Object edgeInfo : nodes) {
             JSONObject jo = (JSONObject) edgeInfo;
             // get method from class with params and ret
             SootMethod sootMethod = getMethod(jo);
@@ -185,33 +185,13 @@ public class AngrCallgraph {
         }
         return false;
     }
-    public static List<Edge> getEdges(String callGraphPath){
-        byte[] bytes;
-        try {
-            bytes = Files.readAllBytes(Paths.get(callGraphPath));
-        } catch (IOException ioe){
-            ioe.printStackTrace();
-            return null;
-        }
-
-        String str = new String(bytes);
-        return parseEdges(str);
-    }
-    public static List<Edge> parseEdges(String jsonStr) {
-        JSONParser jp = new JSONParser();
-        JSONArray ja = null;
-
-        try {
-            ja = (JSONArray) jp.parse(jsonStr);
-        } catch (ParseException ignored){
-        }
-
-        if(ja == null){
+    public static List<Edge> parseEdges(JSONArray edges) {
+        if(edges == null){
             return null;
         }
 
         List<Edge> edgeList = new LinkedList<>();
-        for (Object edgeInfo : ja) {
+        for (Object edgeInfo : edges) {
             Edge edge = parseEdgeInfo((JSONObject) edgeInfo);
             if(edge != null)
                 edgeList.add(edge);
