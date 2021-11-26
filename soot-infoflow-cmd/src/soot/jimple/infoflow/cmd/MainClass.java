@@ -1,13 +1,10 @@
 package soot.jimple.infoflow.cmd;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -15,12 +12,12 @@ import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.json.simple.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import soot.Modifier;
-import soot.Scene;
-import soot.SootClass;
+import soot.*;
+import soot.jimple.*;
 import soot.jimple.infoflow.InfoflowConfiguration;
 import soot.jimple.infoflow.InfoflowConfiguration.AliasingAlgorithm;
 import soot.jimple.infoflow.InfoflowConfiguration.CallbackSourceMode;
@@ -46,6 +43,7 @@ import soot.jimple.infoflow.methodSummary.taintWrappers.TaintWrapperFactory;
 import soot.jimple.infoflow.taintWrappers.EasyTaintWrapper;
 import soot.jimple.infoflow.taintWrappers.ITaintPropagationWrapper;
 import soot.jimple.infoflow.taintWrappers.TaintWrapperSet;
+import soot.jimple.internal.*;
 import soot.util.HashMultiMap;
 import soot.util.MultiMap;
 
@@ -242,9 +240,351 @@ public class MainClass {
 				"Analyze the full frameworks together with the app without any optimizations");
 	}
 
+	public static void dummyMain(String apkFile, String sdkPath) {
+		InfoflowAndroidConfiguration config = new InfoflowAndroidConfiguration();
+		config.getAnalysisFileConfig().setTargetAPKFile(apkFile);
+		config.getAnalysisFileConfig().setAndroidPlatformDir(sdkPath);
+		SetupApplication analy = new SetupApplication(config);
+		SootMethod mainMethod = analy.dummMain();
+		SootClass mainClass = mainMethod.getDeclaringClass();
+
+		HashMap<String, Object> methodMap = translateMethods(mainClass);
+		String resultFile = apkFile + "." + "dummy_main.json";
+		JSONObject json = new JSONObject();
+		json.putAll(methodMap);
+		try(FileWriter file = new FileWriter(resultFile)){
+			file.write(json.toJSONString());
+			file.flush();
+		} catch(IOException e){
+			e.printStackTrace();
+		}
+	}
+	private static HashMap<String, Object> translateMethods(SootClass sootClass){
+		HashMap<String, Object> methodMap = new HashMap<String, Object>();
+
+		for(SootMethod method : sootClass.getMethods()){
+			String methodName = method.getName();
+			Body body = method.getActiveBody();
+			LinkedList<HashMap> bodyList = new LinkedList<>();
+
+			for(Unit unit : body.getUnits()) {
+				Stmt stmt = (Stmt) unit;
+				String stmtType = getStmtType(stmt.getClass().getName());
+				HashMap<String, Object> stmtMap = new HashMap<String, Object>();
+				String type = "";
+				HashMap<String, Object> value = null;
+
+				switch(stmtType){
+					/*
+						{"type": "assign"
+						 "stmt": { *contents* }
+						}
+
+					*/
+					case("JAssignStmt"):
+						type = "assign";
+						value = translateAssignStmt((AssignStmt) stmt);
+						break;
+					case("JGotoStmt"):
+						type = "goto";
+						value = translateGotoStmt((GotoStmt) stmt);
+						break;
+					case("JIdentityStmt"):
+						type = "identity";
+						value = translateIdentityStmt((IdentityStmt) stmt);
+						break;
+					case("JIfStmt"):
+						type = "if";
+						value = translateIfStmt((IfStmt) stmt);
+						break;
+					case("JInvokeStmt"):
+						type = "invoke";
+						value = translateInvokeStmt((InvokeStmt) stmt);
+						break;
+					case("JReturnStmt"):
+						type = "return";
+						value = translateReturnStmt((ReturnStmt) stmt);
+						break;
+					case("JReturnVoidStmt"):
+						type = "returnVoid";
+						value = new HashMap<>();
+						// translatedStmt = translateReturnVoidStmt((ReturnVoidStmt) stmt); don't need to use
+						break;
+
+					case("JBreakpointStmt"):
+					case("JEnterMonitorStmt"):
+					case("JExitMonitorStmt"):
+					case("JLookupSwitchStmt"):
+					case("JTableSwitchStmt"):
+					case("JThrowStmt"):
+					default:
+						break;
+				}
+
+				if(value == null){
+					continue;
+				}
+
+				stmtMap.put("type", type);
+				stmtMap.put("stmt", value);
+				bodyList.add(stmtMap);
+			}
+			methodMap.put(methodName, bodyList);
+		}
+		return methodMap;
+	}
+	private static HashMap<String, Object> translateAssignStmt(AssignStmt stmt) {
+		/*
+			{"leftOp":
+						{"name": "$r0"
+						 }
+			 "rightOp":
+						{"type":
+						}
+			 "hash": 1962
+			}
+			Constant or InvokeExpr
+		 */
+		HashMap<String, Object> map = new HashMap<>();
+		HashMap<String, Object> leftOpMap = new HashMap<>();
+		HashMap<String, Object> rightOpMap = new HashMap<>();
+		if(stmt.getLeftOp() instanceof InstanceFieldRef){
+			InstanceFieldRef leftOp = (InstanceFieldRef) stmt.getLeftOp();
+			String base = leftOp.getBase().toString();
+			String fieldName = leftOp.getFieldRef().name();
+			String fieldType = leftOp.getFieldRef().type().toString();
+			leftOpMap.put("base", base);
+			leftOpMap.put("fieldName", fieldName);
+			leftOpMap.put("fieldType", fieldType);
+		}
+		else if(stmt.getLeftOp() instanceof StaticFieldRef){
+			StaticFieldRef leftOp = (StaticFieldRef) stmt.getLeftOp();
+			String fieldName = leftOp.getFieldRef().name();
+			String fieldType = leftOp.getFieldRef().type().toString();
+			leftOpMap.put("fieldName", fieldName);
+			leftOpMap.put("fieldType", fieldType);
+		}
+		else if(stmt.getLeftOp() instanceof JimpleLocal){
+			JimpleLocal leftOp = (JimpleLocal) stmt.getLeftOp();
+			String name = leftOp.getName();
+			leftOpMap.put("name", name);
+		}
+		else{
+			return null;
+		}
+		String type;
+		Object value;
+		if (stmt.containsInvokeExpr()){
+			InvokeExpr expr = stmt.getInvokeExpr();
+			type = "invoke";
+			value = invokeExprToString(expr);
+		}
+		else if(stmt.getRightOp() instanceof NewExpr){
+			type = "new";
+			value = ((RefType) stmt.getRightOp().getType()).getClassName();
+		}
+		else if(stmt.getRightOp() instanceof JimpleLocal) {
+			JimpleLocal rightOp = (JimpleLocal) stmt.getRightOp();
+			type = "local";
+			value = rightOp.getName();
+		}
+		else if(stmt.getRightOp() instanceof IntConstant){
+			Constant rightOp = (Constant) stmt.getRightOp();
+			type = rightOp.getType().toString();
+			value = rightOp.toString();
+		}
+		else{
+			return null;
+		}
+		int hash = stmt.hashCode();
+		rightOpMap.put("type", type);
+		rightOpMap.put("value", value);
+
+		map.put("leftOp", leftOpMap);
+		map.put("rightOp", rightOpMap);
+		map.put("hash", hash);
+		return map;
+	}
+	private static HashMap<String, Object> translateGotoStmt(GotoStmt stmt){
+		/*
+			{"target": 1954
+			}
+
+		*/
+		HashMap<String, Object> map = new HashMap<String, Object>();
+		int target = stmt.getTarget().hashCode();
+		map.put("target", target);
+		return map;
+	}
+	private static HashMap<String, Object> translateIdentityStmt(IdentityStmt stmt){
+		/*
+			{"leftOp":
+						{"name": "$r0",
+						 "type": "java.lang.String[]"
+						 }
+			 "rightOp":
+						{"refType": "android.content.Intent@0"
+						}
+			 "hash": 1961
+			}
+			parameterRef: number & type
+			thisRef: type
+			delimiter = "@"
+		 */
+		HashMap<String, Object> map = new HashMap<>();
+		HashMap<String, Object> leftOpMap = new HashMap<>();
+		HashMap<String, Object> rightOpMap = new HashMap<>();
+		JimpleLocal leftOp = (JimpleLocal) stmt.getLeftOp();
+		Ref rightOp = (Ref) stmt.getRightOp();
+		String name = leftOp.getName();
+		int hash = stmt.hashCode();
+		String typeString = typeToString(leftOp.getType());
+		String refString = identityRefToString(rightOp);
+
+		leftOpMap.put("name", name);
+		leftOpMap.put("type", typeString);
+		rightOpMap.put("refType", refString);
+		map.put("leftOp", leftOpMap);
+		map.put("rightOp", rightOpMap);
+		map.put("hash", hash);
+
+		return map;
+	}
+	private static HashMap<String, Object> translateIfStmt(IfStmt stmt){
+		/*
+			{"condition":
+						{"op1": "$i0",
+						 "op2": "4"
+						 }
+			 "target": 1973
+			 "hash": 1963
+			}
+			every condition is JEqExpr
+			every op1 is local and op2 is IntConstant
+			target can be stmt (returnStmt, ifStmt) -> hash value
+		 */
+
+		HashMap<String, Object> map = new HashMap<>();
+		HashMap<String, Object> conditionMap = new HashMap<>();
+		JEqExpr condition = (JEqExpr) stmt.getCondition();
+		String op1 = condition.getOp1().toString();
+		int op2 = ((IntConstant) condition.getOp2()).value;
+		int targetHash = stmt.getTarget().hashCode();
+		int hash = stmt.hashCode();
+
+		conditionMap.put("op1", op1);
+		conditionMap.put("op2", op2);
+		map.put("condition", conditionMap);
+		map.put("target", targetHash);
+		map.put("hash", hash);
+		return map;
+	}
+	private static HashMap<String, Object> translateInvokeStmt(InvokeStmt stmt){
+		/*
+			{"expr":
+						{"base": "$i0",
+						 "method": "dummyMainMethod_edu_mit_icc__componentname__class__constant_IsolateActivity",
+						 "args": ["null",
+						 		  "null"
+						 		 ]
+						}
+			 "hash": 1880
+			}
+
+		*/
+		HashMap<String, Object> map = new HashMap<>();
+		InvokeExpr expr = stmt.getInvokeExpr();
+		int hash = stmt.hashCode();
+		HashMap<String, Object> exprMap = invokeExprToString(expr);
+		map.put("expr", exprMap);
+		map.put("hash", hash);
+
+		return map;
+	}
+	private static HashMap<String, Object> translateReturnStmt(ReturnStmt stmt){
+		/*
+			{"value": "$r0"
+			 "hash": 2167
+			}
+
+		*/
+		HashMap<String, Object> map = new HashMap<>();
+		String value;
+		if(stmt.getOp() instanceof JimpleLocal){
+			value = ((JimpleLocal) stmt.getOp()).getName();
+		}
+		else{
+			value = stmt.getOp().toString();
+		}
+		int hash = stmt.hashCode();
+
+		map.put("value", value);
+		map.put("hash", hash);
+
+		return map;
+	}
+
+	private static HashMap<String, Object> invokeExprToString(InvokeExpr expr){
+		HashMap<String, Object> map = new HashMap<String, Object>();
+		String base = "";
+		if(expr instanceof VirtualInvokeExpr){
+			base = ((VirtualInvokeExpr) expr).getBase().toString();
+		}
+		String method = expr.getMethod().getSignature();		// have to make ref
+		List<String> args = argsToStr(expr.getArgs());
+		map.put("base", base);
+		map.put("method", method);
+		map.put("args", args);
+		return map;
+	}
+	private static List<String> argsToStr(List<Value> args){
+		List<String> argsList = new LinkedList<String>();
+		for(Value arg : args){
+			if(arg instanceof NullConstant){
+				argsList.add("null");
+			}
+			else{
+				argsList.add(arg.toString());
+			}
+		}
+		return argsList;
+	}
+	private static String getStmtType(String className){
+		String stmtType = null;
+		for(String splited : className.split("\\.")){
+			stmtType = splited;
+		}
+		return stmtType;
+	}
+	private static String typeToString(Type type){
+		String typeName = null;
+		if(type instanceof ArrayType){
+			typeName = type.toString();		// Have to parse "[]" counts
+		}
+		else if(type instanceof RefType) {
+			typeName = ((RefType) type).getClassName();
+		}
+		else{
+			typeName = type.toString();
+		}
+		return typeName;
+	}
+	private static String identityRefToString(Ref ref){
+		String refString;
+		if(ref instanceof ParameterRef){
+			refString = ref.getType().toString() + "@" + ((ParameterRef) ref).getIndex();
+		}
+		else if(ref instanceof ThisRef){
+			refString = ref.getType().toString();
+		}
+		else{
+			refString = ref.toString();
+		}
+		return refString;
+	}
+
 	public static void main(String[] args) throws Exception {
-		MainClass main = new MainClass();
-		main.run(args);
+		dummyMain(args[0], args[1]);
 	}
 
 	protected void run(String[] args) throws Exception {

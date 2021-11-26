@@ -1391,6 +1391,26 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	 * @throws XmlPullParserException Thrown if the Android manifest file could not
 	 *                                be read.
 	 */
+	public SootMethod dummMain(){
+		// Start a new Soot instance
+		if (config.getSootIntegrationMode() == SootIntegrationMode.CreateNewInstance) {
+			G.reset();
+			initializeSoot();
+		}
+
+		// Perform basic app parsing
+		try {
+			parseAppResources();
+		} catch (IOException | XmlPullParserException e) {
+			logger.error("Parse app resource failed", e);
+			throw new RuntimeException("Parse app resource failed", e);
+		}
+		if (config.getSootIntegrationMode() == SootIntegrationMode.UseExistingCallgraph)
+			return null;
+		entryPointCreator = createEntryPointCreator((SootClass) null);
+		return entryPointCreator.createDummyMain();
+	}
+
 	public InfoflowResults runInfoflow() throws IOException, XmlPullParserException {
 		// If we don't have a source/sink file by now, we cannot run the data
 		// flow analysis
