@@ -600,7 +600,7 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		logger.info("Constructing the callgraph...");
 		PackManager.v().getPack("cg").apply();
 
-		CallGraph cg = AngrCallgraph.newCallgraph();
+		CallGraph cg = AngrCallgraph.newCallgraph(config);
 		Scene.v().setCallGraph(cg);
 
 		// ICC instrumentation

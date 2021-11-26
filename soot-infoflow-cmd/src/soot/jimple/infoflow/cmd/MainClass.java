@@ -70,6 +70,7 @@ public class MainClass {
 	private static final String OPTION_APK_FILE = "a";
 	private static final String OPTION_PLATFORMS_DIR = "p";
 	private static final String OPTION_SOURCES_SINKS_FILE = "s";
+	private static final String OPTION_ANGR_JSON_FILE = "j";
 	private static final String OPTION_OUTPUT_FILE = "o";
 	private static final String OPTION_ADDITIONAL_CLASSPATH = "ac";
 	private static final String OPTION_SKIP_APK_FILE = "si";
@@ -145,6 +146,7 @@ public class MainClass {
 		options.addOption(OPTION_PLATFORMS_DIR, "platformsdir", true,
 				"Path to the platforms directory from the Android SDK");
 		options.addOption(OPTION_SOURCES_SINKS_FILE, "sourcessinksfile", true, "Definition file for sources and sinks");
+		options.addOption(OPTION_ANGR_JSON_FILE, "angrjsonfile", true, "Analyze result of callgraph by angr");
 		options.addOption(OPTION_OUTPUT_FILE, "outputfile", true, "Output XML file for the discovered data flows");
 		options.addOption(OPTION_ADDITIONAL_CLASSPATH, "additionalclasspath", true,
 				"Additional JAR file that shal be put on the classpath");
@@ -742,6 +744,11 @@ public class MainClass {
 			String sourcesSinks = cmd.getOptionValue(OPTION_SOURCES_SINKS_FILE);
 			if (sourcesSinks != null && !sourcesSinks.isEmpty())
 				config.getAnalysisFileConfig().setSourceSinkFile(sourcesSinks);
+		}
+		{
+			String angrJson = cmd.getOptionValue(OPTION_ANGR_JSON_FILE);
+			if (angrJson != null && !angrJson.isEmpty())
+				config.getAnalysisFileConfig().setAngrJsonFile(angrJson);
 		}
 		{
 			String outputFile = cmd.getOptionValue(OPTION_OUTPUT_FILE);

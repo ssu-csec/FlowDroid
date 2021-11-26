@@ -21,18 +21,9 @@ public class AngrCallgraph {
     static String dummyClassName = "nativemethod";
     static CallGraph cg;
 
-    public static CallGraph newCallgraph() {
-        String curPath = Paths.get(".").toAbsolutePath().normalize().toString();
-        File fileInDirectory = new File(curPath, "path_hint.txt");
-        String jsonPath = null;
-        String sourceSinkPath = null;
-        try {
-            BufferedReader br = new BufferedReader(new FileReader(fileInDirectory.getAbsoluteFile()));
-            jsonPath = br.readLine();
-            sourceSinkPath = br.readLine();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+    public static CallGraph newCallgraph(InfoflowAndroidConfiguration config) {
+        String jsonPath = config.getAnalysisFileConfig().getAngrJsonFile();
+        String sourceSinkPath = config.getAnalysisFileConfig().getSourceSinkFile();
 
         byte[] jsonBytes;
         try {
@@ -55,7 +46,9 @@ public class AngrCallgraph {
         }
 
         cg = Scene.v().getCallGraph();
-        loadDummyNodes(nodesJson, sourceSinkPath);
+        if (nodesJson != null) {
+            loadDummyNodes(nodesJson, sourceSinkPath);
+        }
         //CallGraph cg = new CallGraph();
         List<Edge> edges = parseEdges(edgesJson);
         assert edges != null;
@@ -168,10 +161,10 @@ public class AngrCallgraph {
             }catch (IOException e) {
                 //exception handling left as an exercise for the reader
             }
-        }
+        }/*
         if(haveToExit){
             System.exit(777);
-        }
+        }*/
     }
     public static boolean isExistsInFile(String sourceSinkPath, String sink){
         try (Stream<String> stream = Files.lines(Paths.get(sourceSinkPath))) {
