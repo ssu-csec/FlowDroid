@@ -263,7 +263,19 @@ public class MainClass {
 		HashMap<String, Object> methodMap = new HashMap<String, Object>();
 
 		for(SootMethod method : sootClass.getMethods()){
+			HashMap<String, Object> methodInfo = new HashMap<String, Object>();
+			HashMap<String, Object> methodNBody = new HashMap<String, Object>();
+
 			String methodName = method.getName();
+			LinkedList<String> params = new LinkedList<>();
+			for(Type param : method.getParameterTypes()){
+				params.add(param.toString());
+			}
+			String retType = method.getReturnType().toString();
+			methodInfo.put("name", methodName);
+			methodInfo.put("params", params);
+			methodInfo.put("ret", retType);
+
 			Body body = method.getActiveBody();
 			LinkedList<HashMap> bodyList = new LinkedList<>();
 
@@ -307,7 +319,7 @@ public class MainClass {
 						break;
 					case("JReturnVoidStmt"):
 						type = "returnVoid";
-						value = new HashMap<>();
+						value = translateReturnVoidStmt((ReturnVoidStmt) stmt);
 						// translatedStmt = translateReturnVoidStmt((ReturnVoidStmt) stmt); don't need to use
 						break;
 
@@ -329,7 +341,9 @@ public class MainClass {
 				stmtMap.put("stmt", value);
 				bodyList.add(stmtMap);
 			}
-			methodMap.put(methodName, bodyList);
+			methodNBody.put("method", methodInfo);
+			methodNBody.put("body", bodyList);
+			methodMap.put(methodName, methodNBody);
 		}
 		return methodMap;
 	}
@@ -351,23 +365,31 @@ public class MainClass {
 		if(stmt.getLeftOp() instanceof InstanceFieldRef){
 			InstanceFieldRef leftOp = (InstanceFieldRef) stmt.getLeftOp();
 			String base = leftOp.getBase().toString();
+			String declaringClass = leftOp.getFieldRef().declaringClass().toString();
 			String fieldName = leftOp.getFieldRef().name();
 			String fieldType = leftOp.getFieldRef().type().toString();
 			leftOpMap.put("base", base);
+			leftOpMap.put("declaringClass", declaringClass);
 			leftOpMap.put("fieldName", fieldName);
 			leftOpMap.put("fieldType", fieldType);
+
 		}
 		else if(stmt.getLeftOp() instanceof StaticFieldRef){
 			StaticFieldRef leftOp = (StaticFieldRef) stmt.getLeftOp();
+			String declaringClass = leftOp.getFieldRef().declaringClass().toString();
 			String fieldName = leftOp.getFieldRef().name();
 			String fieldType = leftOp.getFieldRef().type().toString();
+
+			leftOpMap.put("declaringClass", declaringClass);
 			leftOpMap.put("fieldName", fieldName);
 			leftOpMap.put("fieldType", fieldType);
 		}
 		else if(stmt.getLeftOp() instanceof JimpleLocal){
 			JimpleLocal leftOp = (JimpleLocal) stmt.getLeftOp();
 			String name = leftOp.getName();
+			String type = leftOp.getType().toString();
 			leftOpMap.put("name", name);
+			leftOpMap.put("type", type);
 		}
 		else{
 			return null;
@@ -413,7 +435,9 @@ public class MainClass {
 		*/
 		HashMap<String, Object> map = new HashMap<String, Object>();
 		int target = stmt.getTarget().hashCode();
+		int hash = stmt.hashCode();
 		map.put("target", target);
+		map.put("hash", hash);
 		return map;
 	}
 	private static HashMap<String, Object> translateIdentityStmt(IdentityStmt stmt){
@@ -501,6 +525,19 @@ public class MainClass {
 
 		return map;
 	}
+	private static HashMap<String, Object> translateReturnVoidStmt(ReturnVoidStmt stmt){
+		/*
+			{"hash": 2167
+			}
+
+		*/
+		HashMap<String, Object> map = new HashMap<>();
+		int hash = stmt.hashCode();
+		map.put("hash", hash);
+
+		return map;
+
+	}
 	private static HashMap<String, Object> translateReturnStmt(ReturnStmt stmt){
 		/*
 			{"value": "$r0"
@@ -527,25 +564,28 @@ public class MainClass {
 	private static HashMap<String, Object> invokeExprToString(InvokeExpr expr){
 		HashMap<String, Object> map = new HashMap<String, Object>();
 		String base = "";
-		if(expr instanceof VirtualInvokeExpr){
-			base = ((VirtualInvokeExpr) expr).getBase().toString();
+		if(expr instanceof AbstractInstanceInvokeExpr) {
+			base = ((AbstractInstanceInvokeExpr) expr).getBase().toString();
 		}
+		String invokeType = expr.getClass().getSimpleName();
 		String method = expr.getMethod().getSignature();		// have to make ref
-		List<String> args = argsToStr(expr.getArgs());
+		LinkedList<HashMap> args = argsToStr(expr.getArgs());
 		map.put("base", base);
+		map.put("invokeType", invokeType);
 		map.put("method", method);
 		map.put("args", args);
 		return map;
 	}
-	private static List<String> argsToStr(List<Value> args){
-		List<String> argsList = new LinkedList<String>();
+	private static LinkedList<HashMap> argsToStr(List<Value> args){
+		LinkedList<HashMap> argsList = new LinkedList<>();
 		for(Value arg : args){
-			if(arg instanceof NullConstant){
-				argsList.add("null");
+			HashMap<String, String> argsMap = new HashMap<String, String>();
+			String type = arg.getType().toString();
+			if(type.equals("null_type")){
+				type = "null";
 			}
-			else{
-				argsList.add(arg.toString());
-			}
+			argsMap.put(type, arg.toString());
+			argsList.add(argsMap);
 		}
 		return argsList;
 	}
