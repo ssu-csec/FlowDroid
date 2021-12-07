@@ -365,24 +365,31 @@ public class MainClass {
 		if(stmt.getLeftOp() instanceof InstanceFieldRef){
 			InstanceFieldRef leftOp = (InstanceFieldRef) stmt.getLeftOp();
 			String base = leftOp.getBase().toString();
-			String declaringClass = leftOp.getFieldRef().declaringClass().toString();
+			SootClass declaringClass = leftOp.getFieldRef().declaringClass();
 			String fieldName = leftOp.getFieldRef().name();
-			String fieldType = leftOp.getFieldRef().type().toString();
+			Type fieldType = leftOp.getFieldRef().type();
+			SootField field = declaringClass.getField(fieldName, fieldType);
+			int modifier = field.getModifiers();
+
 			leftOpMap.put("base", base);
-			leftOpMap.put("declaringClass", declaringClass);
+			leftOpMap.put("declaringClass", declaringClass.toString());
 			leftOpMap.put("fieldName", fieldName);
-			leftOpMap.put("fieldType", fieldType);
+			leftOpMap.put("fieldType", fieldType.toString());
+			leftOpMap.put("modifier", modifier);
 
 		}
 		else if(stmt.getLeftOp() instanceof StaticFieldRef){
 			StaticFieldRef leftOp = (StaticFieldRef) stmt.getLeftOp();
-			String declaringClass = leftOp.getFieldRef().declaringClass().toString();
+			SootClass declaringClass = leftOp.getFieldRef().declaringClass();
 			String fieldName = leftOp.getFieldRef().name();
-			String fieldType = leftOp.getFieldRef().type().toString();
+			Type fieldType = leftOp.getFieldRef().type();
+			SootField field = declaringClass.getField(fieldName, fieldType);
+			int modifier = field.getModifiers();
 
-			leftOpMap.put("declaringClass", declaringClass);
+			leftOpMap.put("declaringClass", declaringClass.toString());
 			leftOpMap.put("fieldName", fieldName);
-			leftOpMap.put("fieldType", fieldType);
+			leftOpMap.put("fieldType", fieldType.toString());
+			leftOpMap.put("modifier", modifier);
 		}
 		else if(stmt.getLeftOp() instanceof JimpleLocal){
 			JimpleLocal leftOp = (JimpleLocal) stmt.getLeftOp();
