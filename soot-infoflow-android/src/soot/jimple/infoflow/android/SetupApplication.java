@@ -83,6 +83,7 @@ import soot.jimple.infoflow.taintWrappers.ITaintWrapperDataFlowAnalysis;
 import soot.jimple.infoflow.util.SystemClassHandler;
 import soot.jimple.infoflow.values.IValueProvider;
 import soot.jimple.toolkits.callgraph.CallGraph;
+import soot.jimple.toolkits.callgraph.Edge;
 import soot.options.Options;
 import soot.util.HashMultiMap;
 import soot.util.MultiMap;
@@ -600,7 +601,36 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		logger.info("Constructing the callgraph...");
 		PackManager.v().getPack("cg").apply();
 
+		// for benchmark
+		HashSet<String> methodSet = new HashSet<>();
+		CallGraph origin = Scene.v().getCallGraph();
+
+		int originEdgeSize = 0;
+		for(Edge edge : origin){
+			methodSet.add(edge.src().getSignature());
+			methodSet.add(edge.tgt().getSignature());
+			originEdgeSize++;
+		}
+		int originMethodSize = methodSet.size();
+
+		double extendDuration = System.nanoTime();
 		CallGraph cg = AngrCallgraph.newCallgraph(config);
+		extendDuration = (System.nanoTime() - extendDuration) / 1E9;
+
+		assert cg != null;
+		int newEdgeSize = 0;
+		for(Edge edge : cg){
+			methodSet.add(edge.src().getSignature());
+			methodSet.add(edge.tgt().getSignature());
+			newEdgeSize++;
+		}
+
+		int edge_grow = newEdgeSize - originEdgeSize;
+		int method_grow = methodSet.size() - originMethodSize;
+		logger.info(String.format("Extended a callgraph with more %d edges and %d methods took %f seconds",
+				edge_grow, method_grow, extendDuration));
+
+
 		Scene.v().setCallGraph(cg);
 
 		// ICC instrumentation
