@@ -186,7 +186,7 @@ public class AngrCallgraph {
         List<Edge> edgeList = new LinkedList<>();
         for (Object edgeInfo : edges) {
             Edge edge = parseEdgeInfo((JSONObject) edgeInfo);
-            if(edge != null)
+            if(edge != null && !edge.tgt().getDeclaringClass().toString().startsWith("android."))
                 edgeList.add(edge);
         }
 
@@ -234,6 +234,8 @@ public class AngrCallgraph {
 
     public static Stmt getStmt(SootMethod sootMethod, long invokeIdx) {
         Body body = sootMethod.getActiveBody();
+        if (body == null)
+            return null;
         UnitPatchingChain units = body.getUnits();
         return traverseStmt(units, invokeIdx);
     }
