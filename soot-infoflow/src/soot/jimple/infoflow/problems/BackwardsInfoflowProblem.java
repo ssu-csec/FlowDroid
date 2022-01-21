@@ -602,9 +602,15 @@ public class BackwardsInfoflowProblem extends AbstractInfoflowProblem {
 										}
 									} else {
 										// Taint the respective parameter local
-										AccessPath ap = manager.getAccessPathFactory()
-												.copyWithNewValue(source.getAccessPath(), paramLocals[i]);
-										Abstraction abs = checkAbstraction(source.deriveNewAbstraction(ap, stmt));
+										Abstraction abs;
+
+										if(i >= paramLocals.length){
+											abs = null;
+										} else{
+											AccessPath ap = manager.getAccessPathFactory()
+													.copyWithNewValue(source.getAccessPath(), paramLocals[i]);
+											abs = checkAbstraction(source.deriveNewAbstraction(ap, stmt));
+										}
 										if (abs != null)
 											res.add(abs);
 									}
