@@ -186,7 +186,7 @@ public class AngrCallgraph {
         List<Edge> edgeList = new LinkedList<>();
         for (Object edgeInfo : edges) {
             Edge edge = parseEdgeInfo((JSONObject) edgeInfo);
-            if(edge != null && !edge.tgt().getDeclaringClass().toString().startsWith("android."))
+            if(edge != null && (!edge.tgt().getDeclaringClass().toString().startsWith("android.") || !edge.tgt().getDeclaringClass().toString().startsWith("com.google.android.")))
                 edgeList.add(edge);
         }
 
