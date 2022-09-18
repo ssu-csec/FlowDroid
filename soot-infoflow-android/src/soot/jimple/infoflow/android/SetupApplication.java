@@ -606,7 +606,7 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		CallGraph origin = Scene.v().getCallGraph();
 
 		int originEdgeSize = 0;
-		for(Edge edge : origin){
+		for (Edge edge : origin) {
 			methodSet.add(edge.src().getSignature());
 			methodSet.add(edge.tgt().getSignature());
 			originEdgeSize++;
@@ -614,24 +614,29 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		int originMethodSize = methodSet.size();
 
 		double extendDuration = System.nanoTime();
-		CallGraph cg = AngrCallgraph.newCallgraph(config);
-		extendDuration = (System.nanoTime() - extendDuration) / 1E9;
 
-		assert cg != null;
-		int newEdgeSize = 0;
-		for(Edge edge : cg){
-			methodSet.add(edge.src().getSignature());
-			methodSet.add(edge.tgt().getSignature());
-			newEdgeSize++;
+		String angrJsonFile = config.getAnalysisFileConfig().getAngrJsonFile();
+
+		if (!angrJsonFile.equals("")) {
+			CallGraph cg = AngrCallgraph.newCallgraph(config);
+			extendDuration = (System.nanoTime() - extendDuration) / 1E9;
+
+			assert cg != null;
+			int newEdgeSize = 0;
+			for (Edge edge : cg) {
+				methodSet.add(edge.src().getSignature());
+				methodSet.add(edge.tgt().getSignature());
+				newEdgeSize++;
+			}
+
+			int edge_grow = newEdgeSize - originEdgeSize;
+			int method_grow = methodSet.size() - originMethodSize;
+			logger.info(String.format("Extended a callgraph with more %d edges and %d methods took %f seconds",
+					edge_grow, method_grow, extendDuration));
+
+
+			Scene.v().setCallGraph(cg);
 		}
-
-		int edge_grow = newEdgeSize - originEdgeSize;
-		int method_grow = methodSet.size() - originMethodSize;
-		logger.info(String.format("Extended a callgraph with more %d edges and %d methods took %f seconds",
-				edge_grow, method_grow, extendDuration));
-
-
-		Scene.v().setCallGraph(cg);
 
 		// ICC instrumentation
 		if (iccInstrumenter != null)

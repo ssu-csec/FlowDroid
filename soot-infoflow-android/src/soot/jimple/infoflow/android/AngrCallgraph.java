@@ -15,10 +15,14 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public class AngrCallgraph {
-    static String dummyClassName = "nativemethod";
+    static String dummyNativeClassName = "DummyNative";
+    static SootClass dummyNativeClass;
+    static Local dummyLocal;
     static CallGraph cg;
 
     public static CallGraph newCallgraph(InfoflowAndroidConfiguration config) {
@@ -64,24 +68,30 @@ public class AngrCallgraph {
             return;
         }
 
-        SootClass nativeClass = Scene.v().getSootClassUnsafe(dummyClassName);
-        nativeClass.setModifiers(9);
-        nativeClass.setApplicationClass();
+        dummyNativeClass = Scene.v().getSootClassUnsafe(dummyNativeClassName);
+        dummyNativeClass.setModifiers(9);
+        dummyNativeClass.setApplicationClass();
 
-        for (Object edgeInfo : nodes) {
-            JSONObject jo = (JSONObject) edgeInfo;
+        for (Object node : nodes) {
+            JSONObject jo = (JSONObject) node;
             // get method from class with params and ret
             SootMethod sootMethod = getMethod(jo);
 
+            if(sootMethod==null){
+                continue;
+            }
+
+            sootMethod.setModifiers(Modifier.PUBLIC);       // To avoid concrete
+
             // load body
             JimpleBody body = Jimple.v().newBody();
-            sootMethod.setModifiers(Modifier.PUBLIC);       // To avoid concrete
             body.setMethod(sootMethod);
+            loadBody(jo, body, sootMethod);
 
-            loadBody(jo, body, sootMethod, nativeClass);
             sootMethod.setActiveBody(body);
-            appendSinks(nativeClass, sourceSinkPath);
+            dummyLocal = null;
         }
+        appendSinks(sourceSinkPath);
     }
     public static SootMethod getMethod(JSONObject jo){
         String className = (String) jo.get("class");
@@ -89,64 +99,217 @@ public class AngrCallgraph {
         String retType = (String) jo.get("ret");
         String params = (String) jo.get("params");
         String subSig = retType + " " + methodName + params;
+        SootClass sootClass;
 
-        SootClass sootClass = Scene.v().getSootClassUnsafe(className);
-        return sootClass.getMethod(subSig);
+        if(Scene.v().containsClass(className)) {
+            sootClass = Scene.v().getSootClass(className);
+        }
+        else{
+            sootClass = Scene.v().makeSootClass(className);
+            sootClass.setModifiers(9);
+            sootClass.setApplicationClass();
+        }
+
+        SootMethod sootMethod = sootClass.getMethodUnsafe(subSig);
+
+        if(sootMethod==null && methodName.equals("JNI_OnLoad")){
+            List<Type> paramTypes = new LinkedList<Type>();
+            sootMethod = Scene.v().makeSootMethod(methodName, paramTypes, VoidType.v());
+            sootMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
+            sootClass.addMethod(sootMethod);
+        }
+        return sootMethod;
     }
-    public static void loadBody(JSONObject jo, JimpleBody body, SootMethod sootMethod, SootClass nativeClass){
+    public static void loadBody(JSONObject jo, JimpleBody body, SootMethod sootMethod){
         LocalGenerator lg = new LocalGenerator(body);
-        List<JSONObject> stmtList = (List<JSONObject>) jo.get("body");
+        List<JSONObject> stmtInfoList = (List<JSONObject>) jo.get("body");
         List<Local> localList = new LinkedList<Local>();
 
-        Local thisLocal = lg.generateLocal(sootMethod.getDeclaringClass().getType());
-        body.getUnits().add(Jimple.v().newIdentityStmt(thisLocal, Jimple.v().newThisRef(sootMethod.getDeclaringClass().getType())));
-        for (JSONObject stmt : stmtList){
-            String stmtType = (String) stmt.get("type");
-            if(stmtType.equals("assign")){
-                int local = Long.valueOf((long) stmt.get("local")).intValue();
+        for (JSONObject stmtInfo : stmtInfoList){
+            Stmt stmt = resolveStmt(stmtInfo, body, lg);
+            body.getUnits().add(stmt);
+        }
+    }
+    public static Stmt resolveStmt(JSONObject stmtInfo, Body body, LocalGenerator localGenerator){
+        String stmtType = (String) stmtInfo.get("stmt_type");
+        Stmt stmt;
+        switch(stmtType){
+            case "identity":
+                Local identityLocal = (Local) resolveValue((JSONObject) stmtInfo.get("local"), body, localGenerator);
+                Ref identityRef = (Ref) resolveValue((JSONObject) stmtInfo.get("param_ref"), body, localGenerator);
+                stmt = Jimple.v().newIdentityStmt(identityLocal, identityRef);
+                break;
+            case "dummy":
+            case "assign":
+                Value leftOp = resolveValue((JSONObject) stmtInfo.get("left_op"), body, localGenerator);
+                Value rightOp = resolveValue((JSONObject) stmtInfo.get("right_op"), body, localGenerator);
+                stmt = Jimple.v().newAssignStmt(leftOp, rightOp);
 
-                Type paramType = sootMethod.getParameterType(local);
-                Local paramLocal = lg.generateLocal(paramType);
-                ParameterRef paramRef = Jimple.v().newParameterRef(paramType, local);
-                localList.add(paramLocal);
-                body.getUnits().add(Jimple.v().newIdentityStmt(paramLocal, paramRef));
+                if(rightOp instanceof InvokeExpr) {
+                    SootMethod src = body.getMethod();
+                    SootMethod tgt = ((InvokeExpr) rightOp).getMethod();
+                    addEdgeForInvoke(stmt, src, tgt, Kind.STATIC);
+                }
 
+                if(stmtType.equals("dummy")){
+                    dummyLocal = (Local) leftOp;
+                }
+                break;
+            case "invoke":
+                InvokeExpr invokeExpr = resolveInvokeExpr(stmtInfo, body);
+                stmt = Jimple.v().newInvokeStmt(invokeExpr);
+
+                SootMethod src = body.getMethod();
+                SootMethod tgt = invokeExpr.getMethod();
+                addEdgeForInvoke(stmt, src, tgt, Kind.STATIC);
+                break;
+            case "return":
+                Value op = resolveValue((JSONObject) stmtInfo.get("local"), body, localGenerator);
+                stmt = Jimple.v().newReturnStmt(op);
+                break;
+            case "return_void":
+                stmt = Jimple.v().newReturnVoidStmt();
+                break;
+            default:
+                stmt = Jimple.v().newNopStmt();
+        }
+
+        return stmt;
+    }
+    public static void addEdgeForInvoke(Stmt stmt, SootMethod src, SootMethod tgt, Kind kind) {
+        Edge edge = new Edge(src, stmt, tgt, kind);
+        cg.addEdge(edge);
+    }
+    public static InvokeExpr resolveInvokeExpr(JSONObject exprInfo, Body body) {
+        String signature = (String) exprInfo.get("callee");
+        SootMethod calleeMethod = Scene.v().grabMethod(signature);
+
+        if (calleeMethod == null) {
+            calleeMethod = makeMethodBySignature(signature);
+            calleeMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
+            calleeMethod.setPhantom(true);
+            dummyNativeClass.addMethod(calleeMethod);
+        }
+
+        List<Value> args = new LinkedList<>();
+        Value value;
+        for(Object arg: (JSONArray) exprInfo.get("args")){
+            if (arg == null) {
+                value = dummyLocal;
+            } else {
+                value = getLocal(body, Integer.parseInt((String) arg));
             }
-            else if(stmtType.equals("invoke")){
-                final InvokeExpr invokeExpr;
-                String callee = (String) stmt.get("callee");
-                List<Long> argsInfo = (List<Long>) stmt.get("args");
-                List<Value> args = new LinkedList<Value>();
-                List<Type> argTypes = new LinkedList<Type>();
-                for (long argLong : argsInfo) {
-                    int argInt = Long.valueOf(argLong).intValue();
-                    Local paramLocal = localList.get(argInt);
-                    argTypes.add(paramLocal.getType());
-                    args.add(paramLocal);
+            args.add(value);
+        }
+
+        return Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
+    }
+    public static Value resolveValue(JSONObject valueInfo, Body body, LocalGenerator localGenerator) {
+        String valueType = (String) valueInfo.get("stmt_type");
+        Value value;
+        switch (valueType) {
+            case "local":
+                value = resolveLocal(valueInfo, body, localGenerator);
+                break;
+            case "int":
+                value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            default:
+                value = resolveRef(valueInfo, body);
+                break;
+        }
+        return value;
+    }
+    public static Local resolveLocal(JSONObject refInfo, Body body, LocalGenerator localGenerator){
+        Local local;
+        int index = ((Long) refInfo.get("index")).intValue();
+
+        if(index >= body.getLocalCount()) {
+            String typeStr = (String) refInfo.get("type");
+            Type localType;
+            if (typeStr.equals("this")){
+                localType = body.getMethod().getDeclaringClass().getType();
+            }
+            else{
+                localType = Scene.v().getType(typeStr);
+            }
+            local = localGenerator.generateLocal(localType);
+        }
+        else {
+            local = getLocal(body, index);
+        }
+
+        return local;
+    }
+    public static Local getLocal(Body body, int index){
+        int i = 0;
+        for (Local local : body.getLocals()) {
+            if(i == index) {
+                return local;
+            }
+            i++;
+        }
+        return null;
+    }
+    public static SootMethod makeMethodBySignature(String signature){
+        // <DummyNative: void printf(None,'java.lang.String')>
+        String subSignature = Scene.signatureToSubsignature(signature);
+        String[] splitStr = subSignature.split(" ");
+
+        String name = splitStr[1].split("\\(")[0];
+
+        List<Type> parameterTypes = new LinkedList<>();
+
+        String patternStr = "(?<=\\().*?(?=\\s*\\)[^)]*$)";
+        Pattern pattern = Pattern.compile(patternStr);
+        Matcher matcher = pattern.matcher(splitStr[1]);
+
+        if(matcher.find()) {
+            String paramStr = matcher.group();
+            for(String param: paramStr.split(",")) {
+                if(param.equals(dummyNativeClassName)){
+                    parameterTypes.add(IntType.v());
                 }
-
-                SootMethod calleeMethod = nativeClass.getMethodByNameUnsafe(callee);
-                if (calleeMethod == null) {
-                    calleeMethod = Scene.v().makeSootMethod(callee, argTypes, VoidType.v());
-                    calleeMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
-                    calleeMethod.setPhantom(true);
-                    nativeClass.addMethod(calleeMethod);
+                else {
+                    parameterTypes.add(Scene.v().getType(param));
                 }
-
-                invokeExpr = Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
-                Stmt statement;
-                statement = Jimple.v().newInvokeStmt(invokeExpr);
-                body.getUnits().add(statement);
-
-                Edge edge = new Edge(sootMethod, statement, calleeMethod, Kind.STATIC);
-                cg.addEdge(edge);
             }
         }
-        body.getUnits().add(Jimple.v().newReturnVoidStmt());
+
+        Type returnType = Scene.v().getType(splitStr[0]);
+
+        return Scene.v().makeSootMethod(name, parameterTypes, returnType);
     }
-    public static void appendSinks(SootClass nativeClass, String sourceSinkPath){
+    public static Ref resolveRef(JSONObject refInfo, Body body){
+        String stmtType = (String) refInfo.get("stmt_type");
+        Ref ref;
+        switch(stmtType){
+            case "this_ref":
+                ref = Jimple.v().newThisRef(body.getMethod().getDeclaringClass().getType());
+                break;
+            case "param_ref":
+                int index = ((Long) refInfo.get("index")).intValue();
+                Type paramType = Scene.v().getType((String) refInfo.get("type"));
+                ref = Jimple.v().newParameterRef(paramType, index);
+                break;
+            case "field_ref":
+                String className = (String) refInfo.get("class");
+                String fieldName = (String) refInfo.get("class");
+                Type fieldType = Scene.v().getType((String) refInfo.get("type"));
+                boolean is_static = refInfo.get("is_static").equals("true");
+                SootFieldRef sootFieldRef = Scene.v().makeFieldRef(Scene.v().getSootClass(className), fieldName, fieldType, is_static);
+                ref = Jimple.v().newStaticFieldRef(sootFieldRef);
+                // Todo: Jimple.v().newInstanceFieldRef()
+                break;
+            default:
+                ref = null;
+        }
+
+        return ref;
+    }
+    public static void appendSinks(String sourceSinkPath){
         boolean haveToExit = false;
-        for (SootMethod method : nativeClass.getMethods()){
+        for (SootMethod method : dummyNativeClass.getMethods()){
             String sig = method.getSignature();
             String sink = sig + " -> _SINK_";
             // Todo: Check sink in text file
