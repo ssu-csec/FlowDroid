@@ -42,17 +42,20 @@ public class AngrCallgraph {
         JSONParser jp = new JSONParser();
         JSONArray nodesJson = null;
         JSONArray edgesJson = null;
+        JSONArray nativeSourcesJson = null;
         try {
             JSONObject jo = (JSONObject) jp.parse(jsonStr);
             nodesJson = (JSONArray) jo.get("nodes");
             edgesJson = (JSONArray) jo.get("edges");
+            nativeSourcesJson = (JSONArray) jo.get("native_sources");
         } catch(ParseException ignored){
         }
 
         cg = Scene.v().getCallGraph();
         if (nodesJson != null) {
-            loadDummyNodes(nodesJson, sourceSinkPath);
+            loadDummyNodes(nodesJson);
         }
+        appendSourcesAndSinks(nativeSourcesJson, sourceSinkPath);
         //CallGraph cg = new CallGraph();
         List<Edge> edges = parseEdges(edgesJson);
         assert edges != null;
@@ -63,7 +66,7 @@ public class AngrCallgraph {
 
         return cg;
     }
-    public static void loadDummyNodes(JSONArray nodes, String sourceSinkPath){
+    public static void loadDummyNodes(JSONArray nodes){
         if(nodes == null){
             return;
         }
@@ -91,7 +94,6 @@ public class AngrCallgraph {
             sootMethod.setActiveBody(body);
             dummyLocal = null;
         }
-        appendSinks(sourceSinkPath);
     }
     public static SootMethod getMethod(JSONObject jo){
         String className = (String) jo.get("class");
@@ -188,7 +190,16 @@ public class AngrCallgraph {
             calleeMethod = makeMethodBySignature(signature);
             calleeMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
             calleeMethod.setPhantom(true);
-            dummyNativeClass.addMethod(calleeMethod);
+
+            String[] splitStr = signature.substring(1).split(":");
+            String class_name = splitStr[0];
+            SootClass sootClass = Scene.v().getSootClassUnsafe(class_name);
+
+            if(sootClass == null) {
+                sootClass = Scene.v().getSootClassUnsafe(class_name);
+            }
+
+            sootClass.addMethod(calleeMethod);
         }
 
         List<Value> args = new LinkedList<>();
@@ -213,6 +224,12 @@ public class AngrCallgraph {
                 break;
             case "int":
                 value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "java.lang.String":
+                value = StringConstant.v(((String) valueInfo.get("value")));
+                break;
+            case "invoke":
+                value = resolveInvokeExpr(valueInfo, body);
                 break;
             default:
                 value = resolveRef(valueInfo, body);
@@ -270,6 +287,9 @@ public class AngrCallgraph {
                 if(param.equals(dummyNativeClassName)){
                     parameterTypes.add(IntType.v());
                 }
+                else if(param.equals("")){
+                    continue;
+                }
                 else {
                     parameterTypes.add(Scene.v().getType(param));
                 }
@@ -307,10 +327,33 @@ public class AngrCallgraph {
 
         return ref;
     }
-    public static void appendSinks(String sourceSinkPath){
+    public static void appendSourcesAndSinks(JSONArray sourceSignatures,String sourceSinkPath){
         boolean haveToExit = false;
+        String[] sigArray = new String[sourceSignatures.size()];
+        int i = 0;
+        for (Object signature : sourceSignatures){
+            String sig = (String) signature;
+            sigArray[i] = sig;
+            String source = sig + " -> _SOURCE_";
+            // Todo: Check sink in text file
+
+            if(isExistsInFile(sourceSinkPath, source)){
+                continue;
+            }
+
+            try {
+                Files.write(Paths.get(sourceSinkPath), ("\n" + source).getBytes(), StandardOpenOption.APPEND);
+                haveToExit = true;
+            }catch (IOException e) {
+                //exception handling left as an exercise for the reader
+            }
+        }
         for (SootMethod method : dummyNativeClass.getMethods()){
             String sig = method.getSignature();
+
+            if(Arrays.asList(sigArray).contains(sig)){
+                continue;
+            }
             String sink = sig + " -> _SINK_";
             // Todo: Check sink in text file
 
