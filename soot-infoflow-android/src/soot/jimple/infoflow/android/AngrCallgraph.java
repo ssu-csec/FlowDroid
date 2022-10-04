@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 public class AngrCallgraph {
     static String dummyNativeClassName = "DummyNative";
     static SootClass dummyNativeClass;
+    static List<Local> allocatedLocals;
     static Local dummyLocal;
     static CallGraph cg;
 
@@ -87,12 +88,12 @@ public class AngrCallgraph {
             sootMethod.setModifiers(Modifier.PUBLIC);       // To avoid concrete
 
             // load body
+            allocatedLocals = new LinkedList<>();
             JimpleBody body = Jimple.v().newBody();
             body.setMethod(sootMethod);
             loadBody(jo, body, sootMethod);
 
             sootMethod.setActiveBody(body);
-            dummyLocal = null;
         }
     }
     public static SootMethod getMethod(JSONObject jo){
@@ -137,13 +138,13 @@ public class AngrCallgraph {
         Stmt stmt;
         switch(stmtType){
             case "identity":
-                Local identityLocal = (Local) resolveValue((JSONObject) stmtInfo.get("local"), body, localGenerator);
+                Local identityLocal = (Local) resolveLeftValue((JSONObject) stmtInfo.get("local"), body, localGenerator);
                 Ref identityRef = (Ref) resolveValue((JSONObject) stmtInfo.get("param_ref"), body, localGenerator);
                 stmt = Jimple.v().newIdentityStmt(identityLocal, identityRef);
                 break;
             case "dummy":
             case "assign":
-                Value leftOp = resolveValue((JSONObject) stmtInfo.get("left_op"), body, localGenerator);
+                Value leftOp = resolveLeftValue((JSONObject) stmtInfo.get("left_op"), body, localGenerator);
                 Value rightOp = resolveValue((JSONObject) stmtInfo.get("right_op"), body, localGenerator);
                 stmt = Jimple.v().newAssignStmt(leftOp, rightOp);
 
@@ -158,12 +159,18 @@ public class AngrCallgraph {
                 }
                 break;
             case "invoke":
-                InvokeExpr invokeExpr = resolveInvokeExpr(stmtInfo, body);
+                InvokeExpr invokeExpr = resolveInvokeExpr(stmtInfo, body, localGenerator);
                 stmt = Jimple.v().newInvokeStmt(invokeExpr);
 
                 SootMethod src = body.getMethod();
                 SootMethod tgt = invokeExpr.getMethod();
-                addEdgeForInvoke(stmt, src, tgt, Kind.STATIC);
+                Kind kind;
+                if(tgt.isStatic()){
+                    kind = Kind.STATIC;
+                }else{
+                    kind = Kind.VIRTUAL;
+                }
+                addEdgeForInvoke(stmt, src, tgt, kind);
                 break;
             case "return":
                 Value op = resolveValue((JSONObject) stmtInfo.get("local"), body, localGenerator);
@@ -182,7 +189,7 @@ public class AngrCallgraph {
         Edge edge = new Edge(src, stmt, tgt, kind);
         cg.addEdge(edge);
     }
-    public static InvokeExpr resolveInvokeExpr(JSONObject exprInfo, Body body) {
+    public static InvokeExpr resolveInvokeExpr(JSONObject exprInfo, Body body, LocalGenerator localGenerator) {
         String signature = (String) exprInfo.get("callee");
         SootMethod calleeMethod = Scene.v().grabMethod(signature);
 
@@ -208,12 +215,22 @@ public class AngrCallgraph {
             if (arg == null) {
                 value = dummyLocal;
             } else {
-                value = getLocal(body, Integer.parseInt((String) arg));
+                    value = getLocal(body, Integer.parseInt((String) arg));
             }
             args.add(value);
         }
+        InvokeExpr expr;
+        SootMethodRef ref = calleeMethod.makeRef();
 
-        return Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
+        if(ref.isStatic()){
+            expr = Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
+        }
+        else{
+            Local tmpRef = localGenerator.generateLocal(calleeMethod.getReturnType());
+            expr = Jimple.v().newVirtualInvokeExpr(tmpRef, ref, args);
+        }
+
+        return expr;
     }
     public static Value resolveValue(JSONObject valueInfo, Body body, LocalGenerator localGenerator) {
         String valueType = (String) valueInfo.get("stmt_type");
@@ -225,15 +242,63 @@ public class AngrCallgraph {
             case "int":
                 value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
                 break;
-            case "java.lang.String":
-                value = StringConstant.v(((String) valueInfo.get("value")));
+            case "new":
+                value = newObject(((String) valueInfo.get("type")));
                 break;
             case "invoke":
-                value = resolveInvokeExpr(valueInfo, body);
+                value = resolveInvokeExpr(valueInfo, body, localGenerator);
                 break;
             default:
                 value = resolveRef(valueInfo, body);
                 break;
+        }
+        return value;
+    }
+
+    public static Value resolveLeftValue(JSONObject valueInfo, Body body, LocalGenerator localGenerator) {
+        String valueType = (String) valueInfo.get("stmt_type");
+        Value value;
+        switch (valueType) {
+            case "local":
+                value = resolveLeftLocal(valueInfo, body, localGenerator);
+                break;
+            case "int":
+                value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "long":
+                value = LongConstant.v(((Long) valueInfo.get("value")));
+                break;
+            case "float":
+                value = FloatConstant.v(((Long) valueInfo.get("value")).floatValue());
+                break;
+            case "double":
+                value = DoubleConstant.v(((Long) valueInfo.get("value")).doubleValue());
+                break;
+            case "new":
+                value = newObject(((String) valueInfo.get("type")));
+                break;
+            case "invoke":
+                value = resolveInvokeExpr(valueInfo, body, localGenerator);
+                break;
+            default:
+                value = resolveRef(valueInfo, body);
+                break;
+        }
+        return value;
+    }
+    public static Value newObject(String objectType){
+        Value value;
+        if ("java.lang.String".equals(objectType)) {
+            value = StringConstant.v((""));
+        }
+        else{
+            RefType refType = Scene.v().getRefType(objectType);
+            value = Jimple.v().newNewExpr(refType);
+        }
+
+        if (value==null){
+            RefType refType = Scene.v().getRefType("java.lang.Object");
+            value = Jimple.v().newNewExpr(refType);
         }
         return value;
     }
@@ -247,6 +312,9 @@ public class AngrCallgraph {
             if (typeStr.equals("this")){
                 localType = body.getMethod().getDeclaringClass().getType();
             }
+            else if (typeStr.equals("None")){
+                localType = NullConstant.v().getType();
+            }
             else{
                 localType = Scene.v().getType(typeStr);
             }
@@ -258,9 +326,23 @@ public class AngrCallgraph {
 
         return local;
     }
+    public static Local resolveLeftLocal(JSONObject refInfo, Body body, LocalGenerator localGenerator){
+        Local local;
+        String typeStr = (String) refInfo.get("type");
+        Type localType;
+        if (typeStr.equals("this")){
+            localType = body.getMethod().getDeclaringClass().getType();
+        }
+        else{
+            localType = Scene.v().getType(typeStr);
+        }
+        local = localGenerator.generateLocal(localType);
+        allocatedLocals.add(local);
+        return local;
+    }
     public static Local getLocal(Body body, int index){
         int i = 0;
-        for (Local local : body.getLocals()) {
+        for (Local local : allocatedLocals) {
             if(i == index) {
                 return local;
             }
@@ -314,11 +396,18 @@ public class AngrCallgraph {
                 break;
             case "field_ref":
                 String className = (String) refInfo.get("class");
-                String fieldName = (String) refInfo.get("class");
+                String fieldName = (String) refInfo.get("name");
                 Type fieldType = Scene.v().getType((String) refInfo.get("type"));
                 boolean is_static = refInfo.get("is_static").equals("true");
                 SootFieldRef sootFieldRef = Scene.v().makeFieldRef(Scene.v().getSootClass(className), fieldName, fieldType, is_static);
-                ref = Jimple.v().newStaticFieldRef(sootFieldRef);
+                if(is_static){
+                    ref = Jimple.v().newStaticFieldRef(sootFieldRef);
+                }
+                else{
+                    int baseIndex = ((Long) refInfo.get("base")).intValue();
+                    Local base = getLocal(body, baseIndex);
+                    ref = Jimple.v().newInstanceFieldRef(base, sootFieldRef);
+                }
                 // Todo: Jimple.v().newInstanceFieldRef()
                 break;
             default:
@@ -335,7 +424,6 @@ public class AngrCallgraph {
             String sig = (String) signature;
             sigArray[i] = sig;
             String source = sig + " -> _SOURCE_";
-            // Todo: Check sink in text file
 
             if(isExistsInFile(sourceSinkPath, source)){
                 continue;
