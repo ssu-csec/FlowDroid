@@ -239,8 +239,14 @@ public class AngrCallgraph {
             case "local":
                 value = resolveLocal(valueInfo, body, localGenerator);
                 break;
+            case "const":
+                value = resolveConstant(valueInfo);
+                break;
             case "int":
                 value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "string":
+                value = StringConstant.v((String) valueInfo.get("value"));
                 break;
             case "new":
                 value = newObject(((String) valueInfo.get("type")));
@@ -253,6 +259,15 @@ public class AngrCallgraph {
                 break;
         }
         return value;
+    }
+    public static Value resolveConstant(JSONObject constInfo) {
+        String valueType = (String) constInfo.get("type");
+        if(valueType.equals("java.lang.String")) {
+            return StringConstant.v((String) constInfo.get("value"));
+        }
+        else{
+            return null;
+        }
     }
 
     public static Value resolveLeftValue(JSONObject valueInfo, Body body, LocalGenerator localGenerator) {
