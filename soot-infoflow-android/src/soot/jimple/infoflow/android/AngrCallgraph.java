@@ -144,8 +144,8 @@ public class AngrCallgraph {
                 break;
             case "dummy":
             case "assign":
-                Value leftOp = resolveLeftValue((JSONObject) stmtInfo.get("left_op"), body, localGenerator);
                 Value rightOp = resolveValue((JSONObject) stmtInfo.get("right_op"), body, localGenerator);
+                Value leftOp = resolveLeftValue((JSONObject) stmtInfo.get("left_op"), body, localGenerator);
                 stmt = Jimple.v().newAssignStmt(leftOp, rightOp);
 
                 if(rightOp instanceof InvokeExpr) {
@@ -215,7 +215,7 @@ public class AngrCallgraph {
             if (arg == null) {
                 value = dummyLocal;
             } else {
-                    value = getLocal(body, Integer.parseInt((String) arg));
+                    value = getLocal(body, ((Long) arg).intValue());
             }
             args.add(value);
         }
