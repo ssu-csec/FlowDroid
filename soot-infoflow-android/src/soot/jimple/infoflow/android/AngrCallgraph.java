@@ -9,6 +9,7 @@ import soot.javaToJimple.LocalGenerator;
 import soot.jimple.*;
 import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.jimple.toolkits.callgraph.Edge;
+import soot.JastAddJ.BooleanType;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -130,7 +131,9 @@ public class AngrCallgraph {
 
         for (JSONObject stmtInfo : stmtInfoList){
             Stmt stmt = resolveStmt(stmtInfo, body, lg);
-            body.getUnits().add(stmt);
+
+            if(stmt!=null)
+                body.getUnits().add(stmt);
         }
     }
     public static Stmt resolveStmt(JSONObject stmtInfo, Body body, LocalGenerator localGenerator){
@@ -142,7 +145,6 @@ public class AngrCallgraph {
                 Ref identityRef = (Ref) resolveValue((JSONObject) stmtInfo.get("param_ref"), body, localGenerator);
                 stmt = Jimple.v().newIdentityStmt(identityLocal, identityRef);
                 break;
-            case "dummy":
             case "assign":
                 Value rightOp = resolveValue((JSONObject) stmtInfo.get("right_op"), body, localGenerator);
                 Value leftOp = resolveLeftValue((JSONObject) stmtInfo.get("left_op"), body, localGenerator);
@@ -153,9 +155,22 @@ public class AngrCallgraph {
                     SootMethod tgt = ((InvokeExpr) rightOp).getMethod();
                     addEdgeForInvoke(stmt, src, tgt, Kind.STATIC);
                 }
+                break;
+            case "dummy":
+                Value rightDummyOp = resolveValue((JSONObject) stmtInfo.get("right_op"), body, localGenerator);
+                if(rightDummyOp==null){
+                    stmt=null;
+                }
+                else{
+                    Value leftDummyOp = resolveLeftValue((JSONObject) stmtInfo.get("left_op"), body, localGenerator);
+                    stmt = Jimple.v().newAssignStmt(leftDummyOp, rightDummyOp);
 
-                if(stmtType.equals("dummy")){
-                    dummyLocal = (Local) leftOp;
+                    if(rightDummyOp instanceof InvokeExpr) {
+                        SootMethod src = body.getMethod();
+                        SootMethod tgt = ((InvokeExpr) rightDummyOp).getMethod();
+                        addEdgeForInvoke(stmt, src, tgt, Kind.STATIC);
+                    }
+                    dummyLocal = (Local) leftDummyOp;
                 }
                 break;
             case "invoke":
@@ -242,8 +257,29 @@ public class AngrCallgraph {
             case "const":
                 value = resolveConstant(valueInfo);
                 break;
+            case "boolean":
+                value = BooleanType.emitConstant((boolean) valueInfo.get("value"));
+                break;
+            case "byte":
+                value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "char":
+                value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "short":
+                value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
             case "int":
                 value = IntConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "long":
+                value = LongConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "float":
+                value = FloatConstant.v(((Long) valueInfo.get("value")).intValue());
+                break;
+            case "double":
+                value = DoubleConstant.v(((Long) valueInfo.get("value")).intValue());
                 break;
             case "string":
                 value = StringConstant.v((String) valueInfo.get("value"));
@@ -307,7 +343,10 @@ public class AngrCallgraph {
             value = StringConstant.v((""));
         }
         else{
-            RefType refType = Scene.v().getRefType(objectType);
+            RefType refType = (RefType) getType(objectType);
+            if(refType==null){
+                return null;
+            }
             value = Jimple.v().newNewExpr(refType);
         }
 
@@ -349,7 +388,7 @@ public class AngrCallgraph {
             localType = body.getMethod().getDeclaringClass().getType();
         }
         else{
-            localType = Scene.v().getType(typeStr);
+            localType = getType(typeStr);
         }
         local = localGenerator.generateLocal(localType);
         allocatedLocals.add(local);
@@ -388,15 +427,28 @@ public class AngrCallgraph {
                     continue;
                 }
                 else {
-                    parameterTypes.add(Scene.v().getType(param));
+                    parameterTypes.add(getType(param));
                 }
             }
         }
 
-        Type returnType = Scene.v().getType(splitStr[0]);
+        Type returnType = getType(splitStr[0]);
 
         return Scene.v().makeSootMethod(name, parameterTypes, returnType);
     }
+
+    public static Type getType(String typeStr){
+        Type type;
+        type = Scene.v().getTypeUnsafe(typeStr);
+
+        if(type==null){
+            SootClass sootClass = Scene.v().getSootClass(typeStr);
+            type = sootClass.getType();
+        }
+
+        return type;
+    }
+
     public static Ref resolveRef(JSONObject refInfo, Body body){
         String stmtType = (String) refInfo.get("stmt_type");
         Ref ref;
@@ -406,13 +458,13 @@ public class AngrCallgraph {
                 break;
             case "param_ref":
                 int index = ((Long) refInfo.get("index")).intValue();
-                Type paramType = Scene.v().getType((String) refInfo.get("type"));
+                Type paramType = getType((String) refInfo.get("type"));
                 ref = Jimple.v().newParameterRef(paramType, index);
                 break;
             case "field_ref":
                 String className = (String) refInfo.get("class");
                 String fieldName = (String) refInfo.get("name");
-                Type fieldType = Scene.v().getType((String) refInfo.get("type"));
+                Type fieldType = getType((String) refInfo.get("type"));
                 boolean is_static = refInfo.get("is_static").equals("true");
                 SootFieldRef sootFieldRef = Scene.v().makeFieldRef(Scene.v().getSootClass(className), fieldName, fieldType, is_static);
                 if(is_static){
@@ -433,29 +485,37 @@ public class AngrCallgraph {
     }
     public static void appendSourcesAndSinks(JSONArray sourceSignatures,String sourceSinkPath){
         boolean haveToExit = false;
-        String[] sigArray = new String[sourceSignatures.size()];
-        int i = 0;
-        for (Object signature : sourceSignatures){
-            String sig = (String) signature;
-            sigArray[i] = sig;
-            String source = sig + " -> _SOURCE_";
+        String[] sigArray;
+        if(sourceSignatures != null) {
+            sigArray = new String[sourceSignatures.size()];
+            int i = 0;
+            for (Object signature : sourceSignatures) {
+                String sig = (String) signature;
+                sigArray[i] = sig;
+                String source = sig + " -> _SOURCE_";
 
-            if(isExistsInFile(sourceSinkPath, source)){
-                continue;
-            }
+                if (isExistsInFile(sourceSinkPath, source)) {
+                    continue;
+                }
 
-            try {
-                Files.write(Paths.get(sourceSinkPath), ("\n" + source).getBytes(), StandardOpenOption.APPEND);
-                haveToExit = true;
-            }catch (IOException e) {
-                //exception handling left as an exercise for the reader
+                try {
+                    Files.write(Paths.get(sourceSinkPath), ("\n" + source).getBytes(), StandardOpenOption.APPEND);
+                    haveToExit = true;
+                } catch (IOException e) {
+                    //exception handling left as an exercise for the reader
+                }
             }
+        }
+        else{
+            sigArray = null;
         }
         for (SootMethod method : dummyNativeClass.getMethods()){
             String sig = method.getSignature();
 
-            if(Arrays.asList(sigArray).contains(sig)){
-                continue;
+            if(sigArray != null) {
+                if (Arrays.asList(sigArray).contains(sig)) {
+                    continue;
+                }
             }
             String sink = sig + " -> _SINK_";
             // Todo: Check sink in text file
@@ -495,7 +555,7 @@ public class AngrCallgraph {
         List<Edge> edgeList = new LinkedList<>();
         for (Object edgeInfo : edges) {
             Edge edge = parseEdgeInfo((JSONObject) edgeInfo);
-            if(edge != null && (!edge.tgt().getDeclaringClass().toString().startsWith("android.") && !edge.tgt().getDeclaringClass().toString().startsWith("com.google.android.") && !edge.tgt().getDeclaringClass().toString().startsWith("java.")))
+            if(edge != null)
                 edgeList.add(edge);
         }
 
