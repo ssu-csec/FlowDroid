@@ -95,7 +95,9 @@ public class AngrCallgraph {
             loadBody(jo, body, sootMethod);
 
             sootMethod.setActiveBody(body);
-//            insertInvokeNativeActivity(sootMethod);
+            if(sootMethod.getDeclaringClass().getName().equals("android.app.NativeActivity")) {
+                insertInvokeNativeActivity(sootMethod);
+            }
         }
     }
     public static void insertInvokeNativeActivity(SootMethod callbackMethod) {
