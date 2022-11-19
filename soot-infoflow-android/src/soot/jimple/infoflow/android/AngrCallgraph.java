@@ -95,14 +95,46 @@ public class AngrCallgraph {
             loadBody(jo, body, sootMethod);
 
             sootMethod.setActiveBody(body);
+//            insertInvokeNativeActivity(sootMethod);
         }
+    }
+    public static void insertInvokeNativeActivity(SootMethod callbackMethod) {
+        /*
+        Leave it if we need later.
+         */
+        SootMethod dummyMethod = Scene.v().getMethod("<dummyMainClass: void dummyMainMethod(java.lang.String[])>");
+//        SootMethod initMethod = Scene.v().getMethod("<android.app.NativeActivity: void init()>");
+
+        Body activeBody = dummyMethod.getActiveBody();
+        LocalGenerator localGenerator = new LocalGenerator(activeBody);
+        UnitPatchingChain units = activeBody.getUnits();
+        Unit lastStmt = units.getLast();
+        units.removeLast();
+
+        LinkedList<Value> emptyArgs = new LinkedList<>();
+        Local newActivity = localGenerator.generateLocal(callbackMethod.getDeclaringClass().getType());
+        NewExpr newExpr = Jimple.v().newNewExpr(callbackMethod.getDeclaringClass().getType());
+        AssignStmt assignStmt = Jimple.v().newAssignStmt(newActivity, newExpr);
+        units.add(assignStmt);
+
+//        InvokeExpr invokeInitExpr = Jimple.v().newSpecialInvokeExpr(newActivity, initMethod.makeRef(), emptyArgs);
+//        InvokeStmt invokeInitStmt = Jimple.v().newInvokeStmt(invokeInitExpr);
+//        units.add(invokeInitStmt);
+
+        InvokeExpr invokeExpr = Jimple.v().newVirtualInvokeExpr(newActivity, callbackMethod.makeRef(), emptyArgs);
+        InvokeStmt invokeStmt = Jimple.v().newInvokeStmt(invokeExpr);
+        units.add(invokeStmt);
+
+        units.add(lastStmt);
+
+        addEdgeForInvoke(invokeStmt, dummyMethod, callbackMethod, Kind.VIRTUAL);
     }
     public static SootMethod getMethod(JSONObject jo){
         String className = (String) jo.get("class");
         String methodName = (String) jo.get("name");
-        String retType = (String) jo.get("ret");
+        String ret = (String) jo.get("ret");
         String params = (String) jo.get("params");
-        String subSig = retType + " " + methodName + params;
+        String subSig = ret + " " + methodName + params;
         SootClass sootClass;
 
         if(Scene.v().containsClass(className)) {
@@ -119,6 +151,18 @@ public class AngrCallgraph {
         if(sootMethod==null && methodName.equals("JNI_OnLoad")){
             List<Type> paramTypes = new LinkedList<Type>();
             sootMethod = Scene.v().makeSootMethod(methodName, paramTypes, VoidType.v());
+            sootMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
+            sootClass.addMethod(sootMethod);
+        }
+        else if(sootMethod==null && sootClass.getName().equals("android.app.NativeActivity")){
+            List<Type> paramTypes = new LinkedList<Type>();
+            Type retType = Scene.v().getType(ret);
+
+            for(String param: params.replace("(", "").replace(")", "").split(",")){
+                paramTypes.add(Scene.v().getType(param));
+            }
+
+            sootMethod = Scene.v().makeSootMethod(methodName, paramTypes, retType);
             sootMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
             sootClass.addMethod(sootMethod);
         }
@@ -476,7 +520,7 @@ public class AngrCallgraph {
                 String className = (String) refInfo.get("class");
                 String fieldName = (String) refInfo.get("name");
                 Type fieldType = getType((String) refInfo.get("type"));
-                boolean is_static = refInfo.get("is_static").equals("true");
+                boolean is_static = (boolean) refInfo.get("is_static");
                 SootFieldRef sootFieldRef = Scene.v().makeFieldRef(Scene.v().getSootClass(className), fieldName, fieldType, is_static);
                 if(is_static){
                     ref = Jimple.v().newStaticFieldRef(sootFieldRef);

@@ -62,6 +62,9 @@ public class SystemClassHandler {
 	 *         false
 	 */
 	public boolean isClassInSystemPackage(String className) {
+		if(className.equals("android.app.NativeActivity")){
+			return false;
+		}
 		return (className.startsWith("android.") || className.startsWith("java.") || className.startsWith("javax.")
 				|| className.startsWith("sun.") || className.startsWith("org.omg.")
 				|| className.startsWith("org.w3c.dom.") || className.startsWith("com.google.")
