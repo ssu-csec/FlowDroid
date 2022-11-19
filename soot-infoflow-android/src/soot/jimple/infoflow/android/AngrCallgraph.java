@@ -153,7 +153,13 @@ public class AngrCallgraph {
                 if(rightOp instanceof InvokeExpr) {
                     SootMethod src = body.getMethod();
                     SootMethod tgt = ((InvokeExpr) rightOp).getMethod();
-                    addEdgeForInvoke(stmt, src, tgt, Kind.STATIC);
+                    Kind kind;
+                    if(tgt.isStatic()){
+                        kind = Kind.STATIC;
+                    }else{
+                        kind = Kind.VIRTUAL;
+                    }
+                    addEdgeForInvoke(stmt, src, tgt, kind);
                 }
                 break;
             case "dummy":
@@ -210,7 +216,12 @@ public class AngrCallgraph {
 
         if (calleeMethod == null) {
             calleeMethod = makeMethodBySignature(signature);
-            calleeMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
+            if ((Boolean) exprInfo.get("is_static")) {
+                calleeMethod.setModifiers(Modifier.PUBLIC + Modifier.STATIC);
+            }
+            else{
+                calleeMethod.setModifiers(Modifier.PUBLIC);
+            }
             calleeMethod.setPhantom(true);
 
             String[] splitStr = signature.substring(1).split(":");
@@ -237,12 +248,12 @@ public class AngrCallgraph {
         InvokeExpr expr;
         SootMethodRef ref = calleeMethod.makeRef();
 
-        if(ref.isStatic()){
-            expr = Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
+        if (!(Boolean) exprInfo.get("is_static")) {
+            Local base = getLocal(body, ((Long) exprInfo.get("base")).intValue());
+            expr = Jimple.v().newVirtualInvokeExpr(base, ref, args);
         }
-        else{
-            Local tmpRef = localGenerator.generateLocal(calleeMethod.getReturnType());
-            expr = Jimple.v().newVirtualInvokeExpr(tmpRef, ref, args);
+        else {
+            expr = Jimple.v().newStaticInvokeExpr(calleeMethod.makeRef(), args);
         }
 
         return expr;
