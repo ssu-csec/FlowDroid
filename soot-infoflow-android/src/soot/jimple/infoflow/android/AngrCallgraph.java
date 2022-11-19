@@ -57,7 +57,9 @@ public class AngrCallgraph {
         if (nodesJson != null) {
             loadDummyNodes(nodesJson);
         }
-        appendSourcesAndSinks(nativeSourcesJson, sourceSinkPath);
+        if (dummyNativeClass != null) {
+            appendSourcesAndSinks(nativeSourcesJson, sourceSinkPath);
+        }
         //CallGraph cg = new CallGraph();
         List<Edge> edges = parseEdges(edgesJson);
         assert edges != null;
