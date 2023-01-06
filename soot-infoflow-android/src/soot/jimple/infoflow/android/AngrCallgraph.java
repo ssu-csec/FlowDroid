@@ -402,11 +402,21 @@ public class AngrCallgraph {
             value = StringConstant.v((""));
         }
         else{
-            RefType refType = (RefType) getType(objectType);
-            if(refType==null){
-                return null;
+            if (objectType.contains("[]")) {
+                ArrayType refType = (ArrayType) getType(objectType);
+                if(refType==null){
+                    return null;
+                }
+                Value size = IntConstant.v(16);
+                value = Jimple.v().newNewArrayExpr(refType, size);
             }
-            value = Jimple.v().newNewExpr(refType);
+            else {
+                RefType refType = (RefType) getType(objectType);
+                if(refType==null){
+                    return null;
+                }
+                value = Jimple.v().newNewExpr(refType);
+            }
         }
 
         if (value==null){
