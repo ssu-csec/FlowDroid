@@ -25,6 +25,7 @@ public class AngrCallgraph {
     static SootClass dummyNativeClass;
     static List<Local> allocatedLocals;
     static Local dummyLocal;
+    static int dummyIndex=0;
     static CallGraph cg;
 
     public static CallGraph newCallgraph(InfoflowAndroidConfiguration config) {
@@ -527,6 +528,10 @@ public class AngrCallgraph {
                 break;
             case "param_ref":
                 int index = ((Long) refInfo.get("index")).intValue();
+                if(index == -1) {
+                    index=dummyIndex+1;
+                }
+                dummyIndex=index;
                 Type paramType = getType((String) refInfo.get("type"));
                 ref = Jimple.v().newParameterRef(paramType, index);
                 break;
@@ -599,10 +604,8 @@ public class AngrCallgraph {
             }catch (IOException e) {
                 //exception handling left as an exercise for the reader
             }
-        }/*
-        if(haveToExit){
-            System.exit(777);
-        }*/
+        }
+//        System.exit(777);
     }
     public static boolean isExistsInFile(String sourceSinkPath, String sink){
         try (Stream<String> stream = Files.lines(Paths.get(sourceSinkPath))) {
