@@ -957,11 +957,10 @@ public class InfoflowProblem extends AbstractInfoflowProblem {
 						// Method.invoke(target, arg0, ..., argn)
 						baseLocal = ie.getArg(0);
 					} else {
-						if (!(ie instanceof InstanceInvokeExpr))
-							return null;
-						assert ie instanceof InstanceInvokeExpr;
-						InstanceInvokeExpr vie = (InstanceInvokeExpr) ie;
-						baseLocal = vie.getBase();
+						if (ie instanceof InstanceInvokeExpr) {
+							InstanceInvokeExpr vie = (InstanceInvokeExpr) ie;
+							baseLocal = vie.getBase();
+						}
 					}
 				}
 
