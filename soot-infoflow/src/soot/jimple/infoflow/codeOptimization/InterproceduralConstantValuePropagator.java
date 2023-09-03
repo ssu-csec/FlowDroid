@@ -832,9 +832,6 @@ public class InterproceduralConstantValuePropagator extends SceneTransformer {
 		// Do all of our callees agree on one constant value?
 		boolean hasCallSites = false;
 		for (Unit callSite : callSites) {
-			if (callSite == null)
-				continue;
-
 			// If this call site is in an excluded method, we ignore it
 			if (excludedMethods != null && icfg.isReachable(callSite)) {
 				SootMethod caller = icfg.getMethodOf(callSite);

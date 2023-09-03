@@ -1,6 +1,7 @@
 package soot.jimple.infoflow.android.iccta;
 
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.HashMap;
@@ -33,6 +34,9 @@ public class Ic3ResultLoader {
 				TextFormat.merge(reader, builder);
 				application = builder.build();
 			}
+		} catch (FileNotFoundException fne){
+			logger.error("File not found error " + resultConfigPath);
+			return null;
 		} catch (IOException exception) {
 			logger.error("Problem opening or reading from file " + resultConfigPath, exception);
 			return null;

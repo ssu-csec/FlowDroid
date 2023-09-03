@@ -397,13 +397,7 @@ public class InfoflowProblem extends AbstractInfoflowProblem {
 				final Stmt stmt = (Stmt) src;
 				final InvokeExpr ie = (stmt != null && stmt.containsInvokeExpr()) ? stmt.getInvokeExpr() : null;
 
-				final Local[] locals;
-				try {
-					 locals = dest.getActiveBody().getParameterLocals().toArray(new Local[0]);
-				} catch(Exception e){
-					return null;
-				}
-				final Local[] paramLocals = locals;
+				final Local[] paramLocals = dest.getActiveBody().getParameterLocals().toArray(new Local[0]);
 
 				// This is not cached by Soot, so accesses are more expensive
 				// than one might think
@@ -1034,21 +1028,7 @@ public class InfoflowProblem extends AbstractInfoflowProblem {
 									if (newAP != null)
 										res.add(newAP);
 								}
-							} else {
-								// Taint the corresponding parameter local in
-								// the callee
-                // [DRYJIN] >>
-								AccessPath newAP;
-								if(i >= paramLocals.length){
-									newAP = null;
-								}
-								else{
-									newAP = manager.getAccessPathFactory().copyWithNewValue(ap, paramLocals[i]);
-								}
-								if (newAP != null)
-									res.add(newAP);
 							}
-                // << [DRYJIN]
 						}
 					}
 

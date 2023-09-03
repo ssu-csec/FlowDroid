@@ -318,17 +318,8 @@ public class IFDSSolver<N, D extends FastSolverLinkedNode<D, N>, I extends BiDiI
 							return;
 
 						// compute the call-flow function
-						FlowFunction<D> function;
-						try {
-							function = flowFunctions.getCallFlowFunction(n, sCalledProcN);
-						} catch(CacheLoader.InvalidCacheLoadException | UncheckedExecutionException e){
-							function = null;
-						}
-						Set<D> res;
-						if(function != null)
-							res= computeCallFlowFunction(function, d1, d2);
-						else
-							res = null;
+						FlowFunction<D> function = flowFunctions.getCallFlowFunction(n, sCalledProcN);
+						Set<D> res = computeCallFlowFunction(function, d1, d2);
 
 						if (res != null && !res.isEmpty()) {
 							Collection<N> startPointsOf = icfg.getStartPointsOf(sCalledProcN);
