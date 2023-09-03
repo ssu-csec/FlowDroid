@@ -22,6 +22,7 @@ import soot.Unit;
 import soot.Value;
 import soot.jimple.Jimple;
 import soot.jimple.Stmt;
+import soot.jimple.infoflow.android.AngrCallgraph;
 import soot.jimple.infoflow.android.entryPointCreators.components.ComponentEntryPointCollection;
 import soot.jimple.infoflow.entryPointCreators.SimulatedCodeElementTag;
 import soot.jimple.infoflow.handlers.PreAnalysisHandler;
@@ -62,6 +63,7 @@ public class IccInstrumenter implements PreAnalysisHandler {
 		logger.info("[IccTA] Loading the ICC Model...");
 		Ic3Provider provider = new Ic3Provider(iccModel);
 		List<IccLink> iccLinks = provider.getIccLinks();
+		iccLinks.addAll(AngrCallgraph.getIccLinks());
 		logger.info("[IccTA] ...End Loading the ICC Model");
 
 		// Create the redirection creator

@@ -4,9 +4,12 @@ import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import soot.*;
-import soot.javaToJimple.LocalGenerator;
+import soot.LocalGenerator;
 import soot.jimple.*;
+import soot.jimple.infoflow.android.iccta.IccLink;
 import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.jimple.toolkits.callgraph.Edge;
 import soot.JastAddJ.BooleanType;
@@ -21,14 +24,29 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public class AngrCallgraph {
+    private static final Logger logger = LoggerFactory.getLogger(AngrCallgraph.class);
+    private static boolean hasLoaded = false;
     static String dummyNativeClassName = "DummyNative";
     static SootClass dummyNativeClass;
     static List<Local> allocatedLocals;
     static Local dummyLocal;
     static int dummyIndex=0;
     static CallGraph cg;
+    static Queue<Edge> edgeQueue = new LinkedList<>();
+    static List<IccLink> iccLinks = new ArrayList<>();
+    static JSONArray nodesJson = null;
+    static JSONArray edgesJson = null;
+    static JSONArray nativeSourcesJson = null;
+    static JSONArray iccLinksJson = null;
 
-    public static CallGraph newCallgraph(InfoflowAndroidConfiguration config) {
+    public static List<IccLink> getIccLinks(){
+        return iccLinks;
+    }
+
+    public static boolean loadJson(InfoflowAndroidConfiguration config) {
+        if (hasLoaded)
+            return true;
+
         String jsonPath = config.getAnalysisFileConfig().getAngrJsonFile();
         String sourceSinkPath = config.getAnalysisFileConfig().getSourceSinkFile();
 
@@ -36,56 +54,51 @@ public class AngrCallgraph {
         try {
             assert jsonPath != null;
             jsonBytes = Files.readAllBytes(Paths.get(jsonPath));
-        } catch (IOException ioe){
+        } catch (IOException ioe) {
             ioe.printStackTrace();
-            return null;
+            return false;
         }
 
         String jsonStr = new String(jsonBytes);
         JSONParser jp = new JSONParser();
-        JSONArray nodesJson = null;
-        JSONArray edgesJson = null;
-        JSONArray nativeSourcesJson = null;
         try {
             JSONObject jo = (JSONObject) jp.parse(jsonStr);
             nodesJson = (JSONArray) jo.get("nodes");
             edgesJson = (JSONArray) jo.get("edges");
             nativeSourcesJson = (JSONArray) jo.get("native_sources");
-        } catch(ParseException ignored){
+            iccLinksJson = (JSONArray) jo.get("icc_links");
+        } catch (ParseException ignored) {
+            return false;
         }
+        logger.info("Done to load json file for DryJIN");
+        logger.info("loadNodes");
+        loadNodes();
+        logger.info("loadEdges");
+        loadEdges();
+        logger.info("loadNativeSources");
+        loadNativeSources(config.getAnalysisFileConfig().getSourceSinkFile());
+        logger.info("loadIccLinks");
+        loadIccLinks();
+        hasLoaded = true;
+        return true;
+    };
 
-        cg = Scene.v().getCallGraph();
-        if (nodesJson != null) {
-            loadDummyNodes(nodesJson);
-        }
-        if (dummyNativeClass != null) {
-            appendSourcesAndSinks(nativeSourcesJson, sourceSinkPath);
-        }
-        //CallGraph cg = new CallGraph();
-        List<Edge> edges = parseEdges(edgesJson);
-        assert edges != null;
-
-        for (Edge edge : edges) {
-            cg.addEdge(edge);
-        }
-
-        return cg;
-    }
-    public static void loadDummyNodes(JSONArray nodes){
-        if(nodes == null){
-            return;
+    public static boolean loadNodes(){
+        if(nodesJson == null){
+            logger.info("Failed to load nodes for DryJIN.");
+            return false;
         }
 
         dummyNativeClass = Scene.v().getSootClassUnsafe(dummyNativeClassName);
         dummyNativeClass.setModifiers(9);
         dummyNativeClass.setApplicationClass();
 
-        for (Object node : nodes) {
+        for (Object node : nodesJson) {
             JSONObject jo = (JSONObject) node;
             // get method from class with params and ret
             SootMethod sootMethod = getMethod(jo);
 
-            if(sootMethod==null){
+            if(sootMethod==null || sootMethod.hasActiveBody()){
                 continue;
             }
 
@@ -102,7 +115,79 @@ public class AngrCallgraph {
                 insertInvokeNativeActivity(sootMethod);
             }
         }
+        return true;
     }
+
+    public static boolean loadEdges() {
+        if(edgesJson == null){
+            logger.error("Failed to load edges for DryJIN.");
+            return false;
+        }
+
+        for (Object edgeInfo : edgesJson) {
+            Edge edge = parseEdgeInfo((JSONObject) edgeInfo);
+            if(edge != null)
+                edgeQueue.add(edge);
+        }
+        return true;
+    }
+
+    public static boolean loadNativeSources(String sourceSinkPath) {
+        if (dummyNativeClass != null && nativeSourcesJson != null) {
+            appendSourcesAndSinks(nativeSourcesJson, sourceSinkPath);
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    public static boolean loadIccLinks() {
+        if(iccLinksJson == null){
+            logger.info("Failed to load nodes for DryJIN.");
+            return false;
+        }
+
+        for (Object node : iccLinksJson) {
+            JSONObject jo = (JSONObject) node;
+            // get method from class with params and ret
+            Long fromUIdx = (Long) jo.get("fromU");
+            String fromSmSignature = (String) jo.get("fromSm");
+            String destinationCSignature = (String) jo.get("destinationC");
+
+            SootMethod fromSM = Scene.v().grabMethod(fromSmSignature);
+            SootClass destinationC = Scene.v().getSootClassUnsafe(destinationCSignature);
+            Unit fromU = null;
+            int idx = 0;
+            Body body = fromSM.getActiveBody();
+            if (body != null) {
+                UnitPatchingChain units = fromSM.getActiveBody().getUnits();
+
+                for (Unit unit : fromSM.getActiveBody().getUnits()) {
+                    if (idx == fromUIdx) {
+                        fromU = unit;
+                        break;
+                    }
+                    idx++;
+                }
+
+                IccLink iccLink = new IccLink(fromSM, fromU, destinationC);
+                iccLink.setExit_kind("Activity");
+
+                iccLinks.add(iccLink);
+            }
+        }
+        return true;
+    }
+
+    public static void addEdges(CallGraph cg) {
+        for (Edge edge : edgeQueue){
+            cg.addEdge(edge);
+        }
+        edgeQueue.clear();
+        edgesJson.clear();
+    }
+
     public static void insertInvokeNativeActivity(SootMethod callbackMethod) {
         /*
         Leave it if we need later.
@@ -111,7 +196,7 @@ public class AngrCallgraph {
 //        SootMethod initMethod = Scene.v().getMethod("<android.app.NativeActivity: void init()>");
 
         Body activeBody = dummyMethod.getActiveBody();
-        LocalGenerator localGenerator = new LocalGenerator(activeBody);
+        LocalGenerator localGenerator = Scene.v().createLocalGenerator(activeBody);
         UnitPatchingChain units = activeBody.getUnits();
         Unit lastStmt = units.getLast();
         units.removeLast();
@@ -174,7 +259,7 @@ public class AngrCallgraph {
         return sootMethod;
     }
     public static void loadBody(JSONObject jo, JimpleBody body, SootMethod sootMethod){
-        LocalGenerator lg = new LocalGenerator(body);
+        LocalGenerator lg = Scene.v().createLocalGenerator(body);
         List<JSONObject> stmtInfoList = (List<JSONObject>) jo.get("body");
         List<Local> localList = new LinkedList<Local>();
 
@@ -257,8 +342,9 @@ public class AngrCallgraph {
     }
     public static void addEdgeForInvoke(Stmt stmt, SootMethod src, SootMethod tgt, Kind kind) {
         Edge edge = new Edge(src, stmt, tgt, kind);
-        cg.addEdge(edge);
+        edgeQueue.add(edge);
     }
+
     public static InvokeExpr resolveInvokeExpr(JSONObject exprInfo, Body body, LocalGenerator localGenerator) {
         String signature = (String) exprInfo.get("callee");
         SootMethod calleeMethod = Scene.v().grabMethod(signature);
@@ -290,7 +376,7 @@ public class AngrCallgraph {
             if (arg == null) {
                 value = dummyLocal;
             } else {
-                    value = getLocal(body, ((Long) arg).intValue());
+                value = getLocal(body, ((Long) arg).intValue());
             }
             args.add(value);
         }
@@ -619,20 +705,7 @@ public class AngrCallgraph {
         }
         return false;
     }
-    public static List<Edge> parseEdges(JSONArray edges) {
-        if(edges == null){
-            return null;
-        }
 
-        List<Edge> edgeList = new LinkedList<>();
-        for (Object edgeInfo : edges) {
-            Edge edge = parseEdgeInfo((JSONObject) edgeInfo);
-            if(edge != null)
-                edgeList.add(edge);
-        }
-
-        return edgeList;
-    }
     public static Edge parseEdgeInfo(JSONObject jsonObject){
         String srcSig = (String) jsonObject.get("src");
         String tgtSig = (String) jsonObject.get("tgt");
@@ -740,4 +813,4 @@ public class AngrCallgraph {
         }
     }
 
-}
+} 

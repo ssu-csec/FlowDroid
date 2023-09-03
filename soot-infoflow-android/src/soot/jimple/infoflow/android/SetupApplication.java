@@ -106,9 +106,9 @@ import soot.jimple.infoflow.sourcesSinks.manager.ISourceSinkManager;
 import soot.jimple.infoflow.taintWrappers.ITaintPropagationWrapper;
 import soot.jimple.infoflow.taintWrappers.ITaintWrapperDataFlowAnalysis;
 import soot.jimple.infoflow.util.SystemClassHandler;
-import soot.jimple.infoflow.values.IValueProvider;
 import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.jimple.toolkits.callgraph.Edge;
+import soot.jimple.infoflow.values.IValueProvider;
 import soot.options.Options;
 import soot.util.HashMultiMap;
 import soot.util.MultiMap;
@@ -392,10 +392,8 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	}
 
 	/**
-	 * Sets the class names of callbacks. hese are the callback classes defined by
-	 * the Android SDK, and they are not mapped to the current application. If this
-	 * value is null, FlowDroid automatically loads the names from
-	 * AndroidCallbacks.txt as the default behavior.
+	 * Sets the class names of callbacks. If this value is null, it automatically
+	 * loads the names from AndroidCallbacks.txt as the default behavior.
 	 * 
 	 * @param callbackClasses The class names of callbacks or null to use the
 	 *                        default file.
@@ -404,12 +402,6 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		this.callbackClasses = callbackClasses;
 	}
 
-	/**
-	 * Gets the class names of callbacks. These are the callback classes defined by
-	 * the Android SDK, and they are not mapped to the current application.
-	 * 
-	 * @return The class names of callbacks or null to use the default file.
-	 */
 	public Set<String> getCallbackClasses() {
 		return callbackClasses;
 	}
@@ -612,6 +604,17 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 			return;
 		}
 
+		// AngrCallgraph
+		String angrJsonFile = config.getAnalysisFileConfig().getAngrJsonFile();
+
+		L1: if (!angrJsonFile.isEmpty()) {
+			logger.info("Load json file for DryJIN.");
+			if (!AngrCallgraph.loadJson(config)) {
+				logger.error(String.format("An error occurred while loading json file %s", angrJsonFile));
+				break L1;
+			}
+		}
+
 		// Do we need ICC instrumentation?
 		if (config.getIccConfig().isIccEnabled()) {
 			if (iccInstrumenter == null)
@@ -634,42 +637,11 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		// Construct the actual callgraph
 		logger.info("Constructing the callgraph...");
 		PackManager.v().getPack("cg").apply();
+		CallGraph cg = Scene.v().getCallGraph();
 
-		// for benchmark
-		HashSet<String> methodSet = new HashSet<>();
-		CallGraph origin = Scene.v().getCallGraph();
-
-		int originEdgeSize = 0;
-		for (Edge edge : origin) {
-			methodSet.add(edge.src().getSignature());
-			methodSet.add(edge.tgt().getSignature());
-			originEdgeSize++;
-		}
-		int originMethodSize = methodSet.size();
-
-		double extendDuration = System.nanoTime();
-
-		String angrJsonFile = config.getAnalysisFileConfig().getAngrJsonFile();
-
-		if (!angrJsonFile.equals("")) {
-			CallGraph cg = AngrCallgraph.newCallgraph(config);
-			extendDuration = (System.nanoTime() - extendDuration) / 1E9;
-
-			assert cg != null;
-			int newEdgeSize = 0;
-			for (Edge edge : cg) {
-				methodSet.add(edge.src().getSignature());
-				methodSet.add(edge.tgt().getSignature());
-				newEdgeSize++;
-			}
-
-			int edge_grow = newEdgeSize - originEdgeSize;
-			int method_grow = methodSet.size() - originMethodSize;
-			logger.info(String.format("Extended a callgraph with more %d edges and %d methods took %f seconds",
-					edge_grow, method_grow, extendDuration));
-
-
-			Scene.v().setCallGraph(cg);
+		if (!config.getAnalysisFileConfig().getAngrJsonFile().isEmpty()) {
+			AngrCallgraph.addEdges(Scene.v().getCallGraph());
+//			Scene.v().setCallGraph(cg);
 		}
 
 		// ICC instrumentation
