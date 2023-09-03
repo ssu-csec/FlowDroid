@@ -25,6 +25,7 @@ public class InfoflowAndroidConfiguration extends InfoflowConfiguration {
 
 		private String targetAPKFile = "";
 		private String sourceSinkFile = "";
+		private String angrJsonFile = "";
 		private String androidPlatformDir = "";
 		private String additionalClasspath = "";
 		private String outputFile = "";
@@ -37,6 +38,7 @@ public class InfoflowAndroidConfiguration extends InfoflowConfiguration {
 		public void merge(AnalysisFileConfiguration fileConfig) {
 			this.targetAPKFile = fileConfig.targetAPKFile;
 			this.sourceSinkFile = fileConfig.sourceSinkFile;
+			this.angrJsonFile = fileConfig.angrJsonFile;
 			this.androidPlatformDir = fileConfig.androidPlatformDir;
 			this.additionalClasspath = fileConfig.additionalClasspath;
 			this.outputFile = fileConfig.outputFile;
@@ -100,6 +102,9 @@ public class InfoflowAndroidConfiguration extends InfoflowConfiguration {
 		public String getSourceSinkFile() {
 			return sourceSinkFile;
 		}
+		public String getAngrJsonFile() {
+			return angrJsonFile;
+		}
 
 		/**
 		 * Sets the source and sink file
@@ -108,6 +113,9 @@ public class InfoflowAndroidConfiguration extends InfoflowConfiguration {
 		 */
 		public void setSourceSinkFile(String sourceSinkFile) {
 			this.sourceSinkFile = sourceSinkFile;
+		}
+		public void setAngrJsonFile(String angrJsonFile) {
+			this.angrJsonFile = angrJsonFile;
 		}
 
 		/**

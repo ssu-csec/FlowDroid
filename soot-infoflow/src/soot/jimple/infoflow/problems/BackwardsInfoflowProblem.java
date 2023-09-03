@@ -571,6 +571,7 @@ public class BackwardsInfoflowProblem extends AbstractInfoflowProblem {
 						} else if (ie != null && dest.getParameterCount() > 0
 									&& (isReflectiveCallSite || ie.getArgCount() == dest.getParameterCount())) {
 							for (int i = isReflectiveCallSite ? 1 : 0; i < ie.getArgCount(); i++) {
+
 								if (!aliasing.mayAlias(ie.getArg(i), source.getAccessPath().getPlainValue()))
 									continue;
 								if (isPrimitiveOrStringBase(source))

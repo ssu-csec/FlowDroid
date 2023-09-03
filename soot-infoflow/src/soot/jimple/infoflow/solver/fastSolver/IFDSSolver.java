@@ -25,6 +25,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
+import com.google.common.cache.CacheLoader;
+import com.google.common.util.concurrent.UncheckedExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -316,8 +318,17 @@ public class IFDSSolver<N, D extends FastSolverLinkedNode<D, N>, I extends BiDiI
 							return;
 
 						// compute the call-flow function
-						FlowFunction<D> function = flowFunctions.getCallFlowFunction(n, sCalledProcN);
-						Set<D> res = computeCallFlowFunction(function, d1, d2);
+						FlowFunction<D> function;
+						try {
+							function = flowFunctions.getCallFlowFunction(n, sCalledProcN);
+						} catch(CacheLoader.InvalidCacheLoadException | UncheckedExecutionException e){
+							function = null;
+						}
+						Set<D> res;
+						if(function != null)
+							res= computeCallFlowFunction(function, d1, d2);
+						else
+							res = null;
 
 						if (res != null && !res.isEmpty()) {
 							Collection<N> startPointsOf = icfg.getStartPointsOf(sCalledProcN);
