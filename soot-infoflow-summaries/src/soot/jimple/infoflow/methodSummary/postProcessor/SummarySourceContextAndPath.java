@@ -15,7 +15,6 @@ import soot.Local;
 import soot.PrimType;
 import soot.SootField;
 import soot.SootMethod;
-import soot.Type;
 import soot.Unit;
 import soot.Value;
 import soot.ValueBox;
@@ -28,11 +27,11 @@ import soot.jimple.LengthExpr;
 import soot.jimple.NewArrayExpr;
 import soot.jimple.ReturnStmt;
 import soot.jimple.Stmt;
-import soot.jimple.infoflow.InfoflowConfiguration.PathConfiguration;
+import soot.jimple.infoflow.InfoflowConfiguration;
 import soot.jimple.infoflow.InfoflowManager;
 import soot.jimple.infoflow.data.Abstraction;
 import soot.jimple.infoflow.data.AccessPath;
-import soot.jimple.infoflow.data.AccessPathFactory.BasePair;
+import soot.jimple.infoflow.data.AccessPathFragment;
 import soot.jimple.infoflow.data.SourceContextAndPath;
 import soot.jimple.infoflow.methodSummary.util.AliasUtils;
 import soot.jimple.infoflow.taintWrappers.IReversibleTaintWrapper;
@@ -59,7 +58,7 @@ class SummarySourceContextAndPath extends SourceContextAndPath {
 
 	public SummarySourceContextAndPath(InfoflowManager manager, AccessPath value, Stmt stmt, boolean isAlias,
 			AccessPath curAP, List<SootMethod> callees, SummaryPathBuilderContext context) {
-		super(null, value, stmt);
+		super(manager.getConfig(), null, value, stmt);
 		this.manager = manager;
 		this.isAlias = isAlias;
 		this.curAP = curAP;
@@ -69,7 +68,7 @@ class SummarySourceContextAndPath extends SourceContextAndPath {
 
 	public SummarySourceContextAndPath(InfoflowManager manager, AccessPath value, Stmt stmt, AccessPath curAP,
 			boolean isAlias, int depth, List<SootMethod> callees, Object userData, SummaryPathBuilderContext context) {
-		super(null, value, stmt, userData);
+		super(manager.getConfig(), null, value, stmt, userData);
 		this.manager = manager;
 		this.isAlias = isAlias;
 		this.curAP = curAP;
@@ -79,7 +78,7 @@ class SummarySourceContextAndPath extends SourceContextAndPath {
 	}
 
 	@Override
-	public SourceContextAndPath extendPath(Abstraction abs, PathConfiguration pathConfig) {
+	public SourceContextAndPath extendPath(Abstraction abs, InfoflowConfiguration pathConfig) {
 		// Do we have data at all?
 		if (abs == null)
 			return this;
@@ -342,26 +341,25 @@ class SummarySourceContextAndPath extends SourceContextAndPath {
 				return curAP;
 			} else {
 				// Get the bases for this type
-				final Collection<BasePair> bases = manager.getAccessPathFactory().getBaseForType(base.getType());
+				final Collection<AccessPathFragment[]> bases = manager.getAccessPathFactory()
+						.getBaseForType(base.getType());
 				if (bases != null) {
-					for (BasePair xbase : bases) {
-						if (xbase.getFields()[0] == field) {
-							// Build the access path against which we have
-							// actually matched
-							SootField[] cutFields = new SootField[curAP.getFieldCount() + xbase.getFields().length];
-							Type[] cutFieldTypes = new Type[cutFields.length];
+					synchronized (bases) {
+						for (AccessPathFragment[] xbase : bases) {
+							if (xbase[0].getField() == field) {
+								// Build the access path against which we have
+								// actually matched
+								AccessPathFragment[] cutFragments = new AccessPathFragment[curAP.getFragmentCount()
+										+ xbase.length];
 
-							System.arraycopy(xbase.getFields(), 0, cutFields, 0, xbase.getFields().length);
-							System.arraycopy(curAP.getFields(), 0, cutFields, xbase.getFields().length,
-									curAP.getFieldCount());
+								System.arraycopy(xbase, 0, cutFragments, 0, xbase.length);
+								System.arraycopy(curAP.getFragments(), 0, cutFragments, xbase.length,
+										curAP.getFragmentCount());
 
-							System.arraycopy(xbase.getTypes(), 0, cutFieldTypes, 0, xbase.getTypes().length);
-							System.arraycopy(curAP.getFieldTypes(), 0, cutFieldTypes, xbase.getFields().length,
-									curAP.getFieldCount());
-
-							return manager.getAccessPathFactory().createAccessPath(curAP.getPlainValue(), cutFields,
-									curAP.getBaseType(), cutFieldTypes, curAP.getTaintSubFields(), false, false,
-									curAP.getArrayTaintType());
+								return manager.getAccessPathFactory().createAccessPath(curAP.getPlainValue(),
+										curAP.getBaseType(), cutFragments, curAP.getTaintSubFields(), false, false,
+										curAP.getArrayTaintType());
+							}
 						}
 					}
 				}

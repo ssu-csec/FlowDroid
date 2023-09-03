@@ -426,11 +426,12 @@ public class AndroidSourceSinkManager extends BaseSourceSinkManager
 	}
 
 	@Override
-	protected ISourceSinkDefinition getSinkDefinition(Stmt sCallSite, InfoflowManager manager, AccessPath ap) {
-		ISourceSinkDefinition definition = super.getSinkDefinition(sCallSite, manager, ap);
-		if (definition != null)
-			return definition;
+	protected Collection<ISourceSinkDefinition> getSinkDefinitions(Stmt sCallSite, InfoflowManager manager, AccessPath ap) {
+		Collection<ISourceSinkDefinition> definitions = super.getSinkDefinitions(sCallSite, manager, ap);
+		if (definitions.size() > 0)
+			return definitions;
 
+		HashSet<ISourceSinkDefinition> sinkDefs = new HashSet<>();
 		if (sCallSite.containsInvokeExpr()) {
 			final SootMethod callee = sCallSite.getInvokeExpr().getMethod();
 			final String subSig = callee.getSubSignature();
@@ -455,16 +456,42 @@ public class AndroidSourceSinkManager extends BaseSourceSinkManager
 					if (Scene.v().getOrMakeFastHierarchy().isSubclass(sc, clazz)) {
 						SootMethod sm = clazz.getMethodUnsafe(subSig);
 						if (sm != null) {
-							ISourceSinkDefinition def = this.sinkMethods.get(sm);
-							if (def != null)
-								return def;
+							Collection<ISourceSinkDefinition> defs = this.sinkMethods.get(sm);
+							sinkDefs.addAll(defs);
 							break;
 						}
 					}
 				}
 			}
 		}
-		return null;
+		return sinkDefs;
+	}
+
+	@Override
+	protected Collection<ISourceSinkDefinition> getInverseSinkDefinition(Stmt sCallSite, IInfoflowCFG cfg) {
+		Collection<ISourceSinkDefinition> definition = super.getInverseSinkDefinition(sCallSite, cfg);
+		if (definition.size() > 0)
+			return definition;
+
+		HashSet<ISourceSinkDefinition> sinkDefs = new HashSet<>();
+		if (sCallSite.containsInvokeExpr()) {
+			final SootMethod callee = sCallSite.getInvokeExpr().getMethod();
+			final String subSig = callee.getSubSignature();
+			final SootClass sc = callee.getDeclaringClass();
+
+			for (SootClass clazz : iccBaseClasses) {
+				if (Scene.v().getOrMakeFastHierarchy().isSubclass(sc, clazz)) {
+					SootMethod sm = clazz.getMethodUnsafe(subSig);
+					if (sm != null) {
+						Collection<ISourceSinkDefinition> adefs = this.sinkMethods.get(sm);
+						sinkDefs.addAll(adefs);
+						break;
+					}
+				}
+			}
+		}
+
+		return sinkDefs;
 	}
 
 	@Override

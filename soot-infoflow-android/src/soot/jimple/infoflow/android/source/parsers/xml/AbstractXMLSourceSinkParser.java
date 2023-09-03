@@ -25,13 +25,17 @@ import soot.jimple.infoflow.android.data.AndroidMethod;
 import soot.jimple.infoflow.android.data.CategoryDefinition;
 import soot.jimple.infoflow.android.data.CategoryDefinition.CATEGORY;
 import soot.jimple.infoflow.data.AbstractMethodAndClass;
+import soot.jimple.infoflow.river.AdditionalFlowCondition;
 import soot.jimple.infoflow.sourcesSinks.definitions.AccessPathTuple;
+import soot.jimple.infoflow.sourcesSinks.definitions.FieldSourceSinkDefinition;
 import soot.jimple.infoflow.sourcesSinks.definitions.IAccessPathBasedSourceSinkDefinition;
 import soot.jimple.infoflow.sourcesSinks.definitions.ISourceSinkCategory;
 import soot.jimple.infoflow.sourcesSinks.definitions.ISourceSinkDefinition;
 import soot.jimple.infoflow.sourcesSinks.definitions.MethodSourceSinkDefinition;
 import soot.jimple.infoflow.sourcesSinks.definitions.MethodSourceSinkDefinition.CallType;
+import soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkCondition;
 import soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType;
+import soot.util.MultiMap;
 
 /**
  * Abstract class for all Flowdroid XML parsers. Returns a Set of Methods when
@@ -107,8 +111,20 @@ public abstract class AbstractXMLSourceSinkParser {
 		protected List<Set<AccessPathTuple>> paramAPs = new ArrayList<>();
 		protected Set<AccessPathTuple> returnAPs = new HashSet<>();
 
-		protected Map<String, ISourceSinkDefinition> sourcesAndSinks;
 		protected ICategoryFilter categoryFilter = null;
+
+		private Set<String> signaturesOnPath = new HashSet<>();
+		private Set<String> classNamesOnPath = new HashSet<>();
+
+		private Set<String> excludedClassNames = new HashSet<>();
+		private Set<SourceSinkCondition> conditions = new HashSet<>();
+
+		public SAXHandler() {
+		}
+
+		public SAXHandler(ICategoryFilter categoryFilter) {
+			this.categoryFilter = categoryFilter;
+		}
 
 		/**
 		 * Event Handler for the starting element for SAX. Possible start elements for
@@ -156,6 +172,18 @@ public abstract class AbstractXMLSourceSinkParser {
 
 			case XMLConstants.PATHELEMENT_TAG:
 				handleStarttagPathelement(attributes);
+				break;
+
+			case XMLConstants.SIGNATURE_ON_PATH_TAG:
+				handleStarttagSignatureOnPath(attributes);
+				break;
+
+			case XMLConstants.CLASS_NAME_ON_PATH_TAG:
+				handleStarttagClassNameOnPath(attributes);
+				break;
+
+			case XMLConstants.EXCLUDE_CLASS_NAME_TAG:
+				handleStarttagExcludeClassName(attributes);
 				break;
 			}
 		}
@@ -238,7 +266,7 @@ public abstract class AbstractXMLSourceSinkParser {
 		}
 
 		protected void handleStarttagPathelement(Attributes attributes) {
-			if (methodSignature != null && attributes != null) {
+			if (attributes != null) {
 				String tempStr = attributes.getValue(XMLConstants.FIELD_ATTRIBUTE);
 				if (tempStr != null && !tempStr.isEmpty()) {
 					pathElements.add(tempStr);
@@ -248,6 +276,33 @@ public abstract class AbstractXMLSourceSinkParser {
 				if (tempStr != null && !tempStr.isEmpty()) {
 					pathElementTypes.add(tempStr);
 				}
+			}
+		}
+
+		protected void handleStarttagSignatureOnPath(Attributes attributes) {
+			String signature = getStringAttribute(attributes, XMLConstants.SIGNATURE_ATTRIBUTE);
+			if (signature != null) {
+				if (signaturesOnPath == null)
+					signaturesOnPath = new HashSet<>();
+				signaturesOnPath.add("<" + signature + ">");
+			}
+		}
+
+		protected void handleStarttagClassNameOnPath(Attributes attributes) {
+			String className = getStringAttribute(attributes, XMLConstants.CLASS_NAME_ATTRIBUTE);
+			if (className != null) {
+				if (classNamesOnPath == null)
+					classNamesOnPath = new HashSet<>();
+				classNamesOnPath.add(className);
+			}
+		}
+
+		protected void handleStarttagExcludeClassName(Attributes attributes) {
+			String className = getStringAttribute(attributes, XMLConstants.CLASS_NAME_ATTRIBUTE);
+			if (className != null) {
+				if (excludedClassNames == null)
+					excludedClassNames = new HashSet<>();
+				excludedClassNames.add(className);
 			}
 		}
 
@@ -274,6 +329,24 @@ public abstract class AbstractXMLSourceSinkParser {
 		 **/
 		@Override
 		public void characters(char[] ch, int start, int length) throws SAXException {
+		}
+
+		/**
+		 * Gets a string value from a collection of attributes
+		 *
+		 * @param attributes The collection of attributes
+		 * @param name       The name of the attribute for which to get the value
+		 * @return The value for the given attribute if such a value exists and is not
+		 *         empty, null otherwise
+		 */
+		private String getStringAttribute(Attributes attributes, String name) {
+			String value = attributes.getValue(name);
+			if (value != null && !value.isEmpty()) {
+				value = value.trim();
+				if (!value.isEmpty())
+					return value;
+			}
+			return null;
 		}
 
 		/**
@@ -318,6 +391,22 @@ public abstract class AbstractXMLSourceSinkParser {
 				paramTypes.clear();
 				break;
 
+			case XMLConstants.ADDITIONAL_FLOW_CONDITION_TAG:
+				if (!classNamesOnPath.isEmpty() || !signaturesOnPath.isEmpty()) {
+					AdditionalFlowCondition additionalFlowCondition = new AdditionalFlowCondition(classNamesOnPath,
+							signaturesOnPath, excludedClassNames);
+					// Reset both for a new condition
+					classNamesOnPath = new HashSet<>();
+					signaturesOnPath = new HashSet<>();
+
+					excludedClassNames = new HashSet<>();
+
+					if (conditions == null)
+						conditions = new HashSet<>();
+					conditions.add(additionalFlowCondition);
+				}
+				break;
+
 			case XMLConstants.PATHELEMENT_TAG:
 				break;
 			}
@@ -330,11 +419,14 @@ public abstract class AbstractXMLSourceSinkParser {
 			// Check whether we have data
 			if (!baseAPs.isEmpty() || !paramAPs.isEmpty() || !returnAPs.isEmpty()) {
 				AndroidMethod tempMeth = AndroidMethod.createFromSignature(methodSignature);
-
-				@SuppressWarnings("unchecked")
-				ISourceSinkDefinition ssd = createMethodSourceSinkDefinition(tempMeth, baseAPs,
-						paramAPs.toArray(new Set[paramAPs.size()]), returnAPs, callType, category);
-				addSourceSinkDefinition(methodSignature, ssd);
+				if (tempMeth != null) {
+					@SuppressWarnings("unchecked")
+					ISourceSinkDefinition ssd = createMethodSourceSinkDefinition(tempMeth, baseAPs,
+							paramAPs.toArray(new Set[paramAPs.size()]), returnAPs, callType, category, conditions);
+					addSourceSinkDefinition(methodSignature, ssd);
+				} else {
+					logger.error("Invalid method signature: " + methodSignature);
+				}
 			}
 
 			// Start a new method and discard our old data
@@ -344,12 +436,14 @@ public abstract class AbstractXMLSourceSinkParser {
 			paramAPs = new ArrayList<>();
 			returnAPs = new HashSet<>();
 			description = null;
+
+			conditions = new HashSet<>();
 		}
 
 		protected void handleEndtagField() {
 			// Create the field source
 			if (!baseAPs.isEmpty()) {
-				ISourceSinkDefinition ssd = createFieldSourceSinkDefinition(fieldSignature, baseAPs, paramAPs);
+				ISourceSinkDefinition ssd = createFieldSourceSinkDefinition(fieldSignature, baseAPs, conditions);
 				ssd.setCategory(category);
 				addSourceSinkDefinition(fieldSignature, ssd);
 			}
@@ -426,7 +520,7 @@ public abstract class AbstractXMLSourceSinkParser {
 
 	}
 
-	protected Map<String, ISourceSinkDefinition> sourcesAndSinks;
+	protected MultiMap<String, ISourceSinkDefinition> sourcesAndSinks;
 
 	protected Set<ISourceSinkDefinition> sources = new HashSet<>();
 	protected Set<ISourceSinkDefinition> sinks = new HashSet<>();
@@ -470,9 +564,9 @@ public abstract class AbstractXMLSourceSinkParser {
 			SAXParser parser = pf.newSAXParser();
 			runParse(parser, stream);
 		} catch (ParserConfigurationException e) {
-			e.printStackTrace();
+			logger.error("Could not parse sources/sinks from stream", e);
 		} catch (SAXException e) {
-			e.printStackTrace();
+			logger.error("Could not parse sources/sinks from stream", e);
 		}
 		// Build the source and sink lists
 		buildSourceSinkLists();
@@ -499,10 +593,7 @@ public abstract class AbstractXMLSourceSinkParser {
 	 * @param ssd       The source or sink definition
 	 */
 	protected void addSourceSinkDefinition(String signature, IAccessPathBasedSourceSinkDefinition ssd) {
-		if (sourcesAndSinks.containsKey(signature))
-			sourcesAndSinks.get(signature).merge(ssd);
-		else
-			sourcesAndSinks.put(signature, ssd);
+		sourcesAndSinks.put(signature, ssd);
 	}
 
 	public Set<ISourceSinkDefinition> getSources() {
@@ -529,14 +620,32 @@ public abstract class AbstractXMLSourceSinkParser {
 	}
 
 	protected void addSourceSinkDefinition(String signature, ISourceSinkDefinition ssd) {
-		if (sourcesAndSinks.containsKey(signature))
-			sourcesAndSinks.get(signature).merge(ssd);
-		else
-			sourcesAndSinks.put(signature, ssd);
+		sourcesAndSinks.put(signature, ssd);
 	}
 
+	/**
+	 * Factory method for {@link FieldSourceSinkDefinition} instances
+	 * 
+	 * @param signature The signature of the target field
+	 * @param baseAPs   The access paths that shall be considered as sources or
+	 *                  sinks
+	 * @return The newly created {@link FieldSourceSinkDefinition} instance
+	 */
 	protected abstract ISourceSinkDefinition createFieldSourceSinkDefinition(String signature,
-			Set<AccessPathTuple> baseAPs, List<Set<AccessPathTuple>> paramAPs);
+			Set<AccessPathTuple> baseAPs);
+
+	/**
+	 * Factory method for {@link FieldSourceSinkDefinition} instances
+	 *
+	 * @param signature  The signature of the target field
+	 * @param baseAPs    The access paths that shall be considered as sources or
+	 *                   sinks
+	 * @param conditions Conditions which has to be true for the definition to be
+	 *                   valid
+	 * @return The newly created {@link FieldSourceSinkDefinition} instance
+	 */
+	protected abstract ISourceSinkDefinition createFieldSourceSinkDefinition(String signature,
+			Set<AccessPathTuple> baseAPs, Set<SourceSinkCondition> conditions);
 
 	/**
 	 * Factory method for {@link MethodSourceSinkDefinition} instances
@@ -556,6 +665,27 @@ public abstract class AbstractXMLSourceSinkParser {
 	protected abstract ISourceSinkDefinition createMethodSourceSinkDefinition(AbstractMethodAndClass method,
 			Set<AccessPathTuple> baseAPs, Set<AccessPathTuple>[] paramAPs, Set<AccessPathTuple> returnAPs,
 			CallType callType, ISourceSinkCategory category);
+
+	/**
+	 * Factory method for {@link MethodSourceSinkDefinition} instances
+	 *
+	 * @param method     The method that is to be defined as a source or sink
+	 * @param baseAPs    The access paths rooted in the base object that shall be
+	 *                   considered as sources or sinks
+	 * @param paramAPs   The access paths rooted in parameters that shall be
+	 *                   considered as sources or sinks. The index in the set
+	 *                   corresponds to the index of the formal parameter to which
+	 *                   the respective set of access paths belongs.
+	 * @param returnAPs  The access paths rooted in the return object that shall be
+	 *                   considered as sources or sinks
+	 * @param callType   The type of call (normal call, callback, etc.)
+	 * @param conditions Conditions which has to be true for the definition to be
+	 *                   valid
+	 * @return The newly created {@link MethodSourceSinkDefinition} instance
+	 */
+	protected abstract ISourceSinkDefinition createMethodSourceSinkDefinition(AbstractMethodAndClass method,
+			Set<AccessPathTuple> baseAPs, Set<AccessPathTuple>[] paramAPs, Set<AccessPathTuple> returnAPs,
+			CallType callType, ISourceSinkCategory category, Set<SourceSinkCondition> conditions);
 
 	/**
 	 * Reads the method or field signature from the given attribute map

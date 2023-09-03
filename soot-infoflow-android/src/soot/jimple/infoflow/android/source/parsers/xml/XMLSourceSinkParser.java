@@ -5,7 +5,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Set;
 
 import javax.xml.parsers.SAXParser;
@@ -29,7 +28,9 @@ import soot.jimple.infoflow.sourcesSinks.definitions.ISourceSinkDefinition;
 import soot.jimple.infoflow.sourcesSinks.definitions.ISourceSinkDefinitionProvider;
 import soot.jimple.infoflow.sourcesSinks.definitions.MethodSourceSinkDefinition;
 import soot.jimple.infoflow.sourcesSinks.definitions.MethodSourceSinkDefinition.CallType;
+import soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkCondition;
 import soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType;
+import soot.util.HashMultiMap;
 
 /**
  * Parses informations from the new Dataformat (XML) with the help of SAX.
@@ -94,7 +95,7 @@ public class XMLSourceSinkParser extends AbstractXMLSourceSinkParser implements 
 	 * @param filter A filter for excluding certain categories of sources and sinks
 	 */
 	protected XMLSourceSinkParser(ICategoryFilter categoryFilter) {
-		this.sourcesAndSinks = new HashMap<>();
+		this.sourcesAndSinks = new HashMultiMap<>();
 		this.categoryFilter = categoryFilter;
 	}
 
@@ -188,6 +189,16 @@ public class XMLSourceSinkParser extends AbstractXMLSourceSinkParser implements 
 		return null;
 	}
 
+	protected ISourceSinkDefinition createMethodSourceSinkDefinition(AbstractMethodAndClass method,
+			Set<AccessPathTuple> baseAPs, Set<AccessPathTuple>[] paramAPs, Set<AccessPathTuple> returnAPs,
+			CallType callType, ISourceSinkCategory category, Set<SourceSinkCondition> conditions) {
+		ISourceSinkDefinition ssdef = createMethodSourceSinkDefinition(method, baseAPs, paramAPs, returnAPs, callType,
+				category);
+		if (ssdef != null)
+			ssdef.setConditions(conditions);
+		return ssdef;
+	}
+
 	/**
 	 * Factory method for {@link FieldSourceSinkDefinition} instances
 	 * 
@@ -198,8 +209,16 @@ public class XMLSourceSinkParser extends AbstractXMLSourceSinkParser implements 
 	 */
 	@Override
 	protected IAccessPathBasedSourceSinkDefinition createFieldSourceSinkDefinition(String signature,
-			Set<AccessPathTuple> baseAPs, List<Set<AccessPathTuple>> paramAPs) {
+			Set<AccessPathTuple> baseAPs) {
 		return new FieldSourceSinkDefinition(signature, baseAPs);
+	}
+
+	@Override
+	protected IAccessPathBasedSourceSinkDefinition createFieldSourceSinkDefinition(String signature,
+			Set<AccessPathTuple> baseAPs, Set<SourceSinkCondition> conditions) {
+		IAccessPathBasedSourceSinkDefinition ssdef = createFieldSourceSinkDefinition(signature, baseAPs);
+		ssdef.setConditions(conditions);
+		return ssdef;
 	}
 
 	/**
@@ -211,7 +230,7 @@ public class XMLSourceSinkParser extends AbstractXMLSourceSinkParser implements 
 	@Override
 	protected void runParse(SAXParser parser, InputStream stream) {
 		try {
-			parser.parse(stream, new SAXHandler());
+			parser.parse(stream, new SAXHandler(this.categoryFilter));
 		} catch (SAXException | IOException e) {
 			e.printStackTrace();
 		}

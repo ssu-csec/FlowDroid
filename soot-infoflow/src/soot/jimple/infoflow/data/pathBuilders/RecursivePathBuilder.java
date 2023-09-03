@@ -23,7 +23,7 @@ import soot.util.FastStack;
  */
 public class RecursivePathBuilder extends AbstractAbstractionPathBuilder {
 
-	private final InfoflowResults results = new InfoflowResults();
+	private final InfoflowResults results;
 	private final CountingThreadPoolExecutor executor;
 
 	private static int lastTaskId = 0;
@@ -42,6 +42,7 @@ public class RecursivePathBuilder extends AbstractAbstractionPathBuilder {
 	public RecursivePathBuilder(InfoflowManager manager, CountingThreadPoolExecutor executor) {
 		super(manager);
 		this.executor = executor;
+		this.results = new InfoflowResults(manager.getConfig().getPathAgnosticResults());
 	}
 
 	/**
@@ -67,9 +68,9 @@ public class RecursivePathBuilder extends AbstractAbstractionPathBuilder {
 		// If the current statement is a source, we have found a path root
 		if (curAbs.getSourceContext() != null) {
 			// Construct the path root
-			SourceContextAndPath sourceAndPath = new SourceContextAndPath(curAbs.getSourceContext().getDefinition(),
-					curAbs.getSourceContext().getAccessPath(), curAbs.getSourceContext().getStmt(),
-					curAbs.getSourceContext().getUserData()).extendPath(curAbs);
+			SourceContextAndPath sourceAndPath = new SourceContextAndPath(config,
+					curAbs.getSourceContext().getDefinitions(), curAbs.getSourceContext().getAccessPath(),
+					curAbs.getSourceContext().getStmt(), curAbs.getSourceContext().getUserData()).extendPath(curAbs);
 			cacheData.add(sourceAndPath);
 
 			// Sources may not have predecessors
@@ -108,7 +109,7 @@ public class RecursivePathBuilder extends AbstractAbstractionPathBuilder {
 			if (scanPreds) {
 				// Otherwise, we have to check the predecessor
 				for (SourceContextAndPath curScap : getPaths(taskId, curAbs.getPredecessor(), newCallStack)) {
-					SourceContextAndPath extendedPath = curScap.extendPath(curAbs, pathConfig);
+					SourceContextAndPath extendedPath = curScap.extendPath(curAbs, config);
 					if (extendedPath != null)
 						cacheData.add(extendedPath);
 				}
@@ -142,9 +143,9 @@ public class RecursivePathBuilder extends AbstractAbstractionPathBuilder {
 					initialStack.push(new Pair<Stmt, Set<Abstraction>>(null,
 							Collections.newSetFromMap(new IdentityHashMap<Abstraction, Boolean>())));
 					for (SourceContextAndPath context : getPaths(lastTaskId++, abs.getAbstraction(), initialStack)) {
-						results.addResult(abs.getSinkDefinition(), abs.getAbstraction().getAccessPath(),
-								abs.getSinkStmt(), context.getDefinition(), context.getAccessPath(), context.getStmt(),
-								context.getUserData(), context.getAbstractionPath());
+						results.addResult(abs.getSinkDefinitions(), abs.getAbstraction().getAccessPath(),
+								abs.getSinkStmt(), context.getDefinitions(), context.getAccessPath(), context.getStmt(),
+								context.getUserData(), context.getAbstractionPath(), manager);
 					}
 				}
 

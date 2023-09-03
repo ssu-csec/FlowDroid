@@ -112,6 +112,7 @@ public class DeadCodeEliminator implements ICodeOptimizer {
 			for (Unit u : oldCallSites)
 				if (newCallSites == null || !newCallSites.contains(u))
 					Scene.v().getCallGraph().removeAllEdgesOutOf(u);
+
 	}
 
 	/**

@@ -3,18 +3,11 @@ package soot.jimple.infoflow.methodSummary.postProcessor;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Set;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import soot.ArrayType;
-import soot.Local;
-import soot.Scene;
-import soot.SootMethod;
-import soot.Value;
+import soot.*;
 import soot.jimple.InstanceInvokeExpr;
 import soot.jimple.ReturnStmt;
 import soot.jimple.Stmt;
@@ -35,7 +28,7 @@ import soot.jimple.infoflow.methodSummary.postProcessor.SummaryPathBuilder.Summa
 import soot.jimple.infoflow.methodSummary.postProcessor.SummaryPathBuilder.SummarySourceInfo;
 import soot.jimple.infoflow.methodSummary.taintWrappers.AccessPathFragment;
 import soot.jimple.infoflow.methodSummary.util.AliasUtils;
-import soot.jimple.infoflow.solver.executors.InterruptableExecutor;
+import soot.jimple.infoflow.typing.TypeUtils;
 import soot.jimple.infoflow.util.SootMethodRepresentationParser;
 import soot.util.MultiMap;
 
@@ -91,7 +84,7 @@ public class InfoflowResultPostProcessor {
 	private static class FakeInfoflowManager extends InfoflowManager {
 
 		protected FakeInfoflowManager(InfoflowConfiguration config) {
-			super(config, null, null, null, null, null, null, null);
+			super(config);
 		}
 
 	}
@@ -115,20 +108,7 @@ public class InfoflowResultPostProcessor {
 		if (collectedAbstractions != null && !collectedAbstractions.isEmpty()) {
 			// Create a context-sensitive path builder. Without context-sensitivity,
 			// we get quite some false positives here.
-			InterruptableExecutor executor = new InterruptableExecutor(Runtime.getRuntime().availableProcessors(),
-					Runtime.getRuntime().availableProcessors(), 30, TimeUnit.SECONDS,
-					new LinkedBlockingQueue<Runnable>());
-			executor.setThreadFactory(new ThreadFactory() {
-
-				@Override
-				public Thread newThread(Runnable r) {
-					Thread thr = new Thread(r);
-					thr.setDaemon(true);
-					thr.setName("Post processing");
-					return thr;
-				}
-			});
-			SummaryPathBuilder pathBuilder = new SummaryPathBuilder(manager, executor);
+			SummaryPathBuilder pathBuilder = new SummaryPathBuilder(manager);
 
 			for (Abstraction a : collectedAbstractions.keySet()) {
 				// If this abstraction is directly the source abstraction, we do not
@@ -136,11 +116,11 @@ public class InfoflowResultPostProcessor {
 				if (a.getSourceContext() != null) {
 					for (Stmt stmt : collectedAbstractions.get(a)) {
 						processFlowSource(flows, m, a.getAccessPath(), stmt,
-								new SummarySourceInfo(
-										a.getAccessPath(), a.getCurrentStmt(), a.getSourceContext().getUserData(),
-										a.getAccessPath(), isAliasedField(a.getAccessPath(),
-												a.getSourceContext().getAccessPath(), a.getSourceContext().getStmt()),
-										false));
+								new SummarySourceInfo(a.getAccessPath(), a.getCurrentStmt(),
+										a.getSourceContext().getUserData(), a.getAccessPath(),
+										isAliasedField(a.getAccessPath(), a.getSourceContext().getAccessPath(),
+												a.getSourceContext().getStmt()),
+										false, config.getPathAgnosticResults()));
 					}
 				} else {
 					// Get the source info and process the flow
@@ -148,13 +128,6 @@ public class InfoflowResultPostProcessor {
 					pathBuilder.reset();
 					pathBuilder.computeTaintPaths(
 							Collections.singleton(new AbstractionAtSink(null, a, a.getCurrentStmt())));
-
-					// Wait for the executor to complete all of its tasks
-					try {
-						executor.awaitCompletion();
-					} catch (InterruptedException e) {
-						logger.error("Could not wait for executor termination", e);
-					}
 
 					logger.info("Obtained {} source-to-sink connections.", pathBuilder.getResultInfos().size());
 
@@ -187,6 +160,7 @@ public class InfoflowResultPostProcessor {
 					pathBuilder.clear();
 				}
 			}
+			pathBuilder.shutdown();
 		}
 
 		// Compact the flow set to remove paths that are over-approximations of
@@ -315,7 +289,7 @@ public class InfoflowResultPostProcessor {
 		}
 
 		// The sink may be a local field on the base object
-		if (apAtCall.getFieldCount() > 0 && stmt.getInvokeExpr() instanceof InstanceInvokeExpr) {
+		if (apAtCall.getFragmentCount() > 0 && stmt.getInvokeExpr() instanceof InstanceInvokeExpr) {
 			InstanceInvokeExpr iinv = (InstanceInvokeExpr) stmt.getInvokeExpr();
 			if (apAtCall.getPlainValue() == iinv.getBase()) {
 				return sourceSinkFactory.createFieldSink(apAtCall);
@@ -354,15 +328,21 @@ public class InfoflowResultPostProcessor {
 
 		// The sink may be a parameter
 		if (!isInCallee) {
-			if (!apAtReturn.isLocal() || apAtReturn.getTaintSubFields()
-					|| apAtReturn.getBaseType() instanceof ArrayType)
-				for (int i = 0; i < m.getParameterCount(); i++) {
-					Local p = m.getActiveBody().getParameterLocal(i);
-					if (apAtReturn.getPlainValue() == p) {
-						FlowSink sink = sourceSinkFactory.createParameterSink(i, apAtReturn);
-						addFlow(source, sink, isAlias, flows);
+			if (apAtReturn.getPlainValue() != null
+					&& (apAtReturn.getTaintSubFields() || apAtReturn.getFragmentCount() > 0)) {
+				boolean isString = TypeUtils.isStringType(apAtReturn.getBaseType())
+						&& !apAtReturn.getCanHaveImmutableAliases();
+				if (apAtReturn.getBaseType() instanceof ArrayType
+						|| (apAtReturn.getBaseType() instanceof RefType && !isString)) {
+					for (int i = 0; i < m.getParameterCount(); i++) {
+						Local p = m.getActiveBody().getParameterLocal(i);
+						if (apAtReturn.getPlainValue() == p) {
+							FlowSink sink = sourceSinkFactory.createParameterSink(i, apAtReturn);
+							addFlow(source, sink, isAlias, flows);
+						}
 					}
 				}
+			}
 		}
 
 		// The sink may be a local field
@@ -440,12 +420,16 @@ public class InfoflowResultPostProcessor {
 	 * @param summaries The method summary to which to add the data flow
 	 */
 	protected void addFlow(FlowSource source, FlowSink sink, boolean isAlias, MethodSummaries summaries) {
-		// Convert the method signature into a subsignature
-		String methodSubSig = SootMethodRepresentationParser.v().parseSootMethodString(method).getSubSignature();
+		// Ignore flows for which we don't have source and sink
+		if (source == null || sink == null)
+			return;
 
 		// Ignore identity flows
 		if (isIdentityFlow(source, sink))
 			return;
+
+		// Convert the method signature into a subsignature
+		String methodSubSig = SootMethodRepresentationParser.v().parseSootMethodString(method).getSubSignature();
 
 		MethodFlow mFlow = new MethodFlow(methodSubSig, source, sink, isAlias, true, false, false);
 		if (summaries.addFlow(mFlow))

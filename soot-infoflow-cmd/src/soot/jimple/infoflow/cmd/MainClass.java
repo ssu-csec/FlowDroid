@@ -21,11 +21,11 @@ import org.slf4j.LoggerFactory;
 import soot.Modifier;
 import soot.Scene;
 import soot.SootClass;
-import soot.jimple.infoflow.InfoflowConfiguration;
 import soot.jimple.infoflow.InfoflowConfiguration.AliasingAlgorithm;
 import soot.jimple.infoflow.InfoflowConfiguration.CallbackSourceMode;
 import soot.jimple.infoflow.InfoflowConfiguration.CallgraphAlgorithm;
 import soot.jimple.infoflow.InfoflowConfiguration.CodeEliminationMode;
+import soot.jimple.infoflow.InfoflowConfiguration.DataFlowDirection;
 import soot.jimple.infoflow.InfoflowConfiguration.DataFlowSolver;
 import soot.jimple.infoflow.InfoflowConfiguration.ImplicitFlowMode;
 import soot.jimple.infoflow.InfoflowConfiguration.LayoutMatchingMode;
@@ -109,6 +109,7 @@ public class MainClass {
 	private static final String OPTION_MAX_CALLBACKS_COMPONENT = "mc";
 	private static final String OPTION_MAX_CALLBACKS_DEPTH = "md";
 	private static final String OPTION_PATH_SPECIFIC_RESULTS = "ps";
+	private static final String OPTION_MAX_THREAD_NUMBER = "mt";
 
 	// Inter-component communication
 	private static final String OPTION_ICC_MODEL = "im";
@@ -126,9 +127,15 @@ public class MainClass {
 	private static final String OPTION_PATH_RECONSTRUCTION_MODE = "pr";
 	private static final String OPTION_IMPLICIT_FLOW_MODE = "i";
 	private static final String OPTION_STATIC_FLOW_TRACKING_MODE = "sf";
+	private static final String OPTION_DATA_FLOW_DIRECTION = "dir";
+	private static final String OPTION_GC_SLEEP_TIME = "st";
 
 	// Evaluation-specific options
 	private static final String OPTION_ANALYZE_FRAMEWORKS = "ff";
+
+	// Callgraph analysis
+	private static final String OPTION_CALLGRAPH_FILE = "cf";
+	private static final String OPTION_CALLGRAPH_ONLY = "x";
 
 	protected MainClass() {
 		initializeCommandLineOptions();
@@ -190,7 +197,8 @@ public class MainClass {
 				"Compute the taint propagation paths and not just source-to-sink connections. This is a shorthand notation for -pr fast.");
 		options.addOption(OPTION_LOG_SOURCES_SINKS, "logsourcesandsinks", false,
 				"Write the discovered sources and sinks to the log output");
-		options.addOption("mt", "maxthreadnum", true, "Limit the maximum number of threads to the given value");
+		options.addOption(OPTION_MAX_THREAD_NUMBER, "maxthreadnum", true,
+				"Limit the maximum number of threads to the given value");
 		options.addOption(OPTION_ONE_COMPONENT, "onecomponentatatime", false,
 				"Analyze one Android component at a time");
 		options.addOption(OPTION_ONE_SOURCE, "onesourceatatime", false, "Analyze one source at a time");
@@ -236,10 +244,19 @@ public class MainClass {
 				"Use the specified mode when processing implicit data flows (NONE, ARRAYONLY, ALL)");
 		options.addOption(OPTION_STATIC_FLOW_TRACKING_MODE, "staticmode", true,
 				"Use the specified mode when tracking static data flows (CONTEXTFLOWSENSITIVE, CONTEXTFLOWINSENSITIVE, NONE)");
+		options.addOption(OPTION_DATA_FLOW_DIRECTION, "direction", true,
+				"Specifies the direction of the infoflow analysis (FORWARDS, BACKWARDS)");
+		options.addOption(OPTION_GC_SLEEP_TIME, "gcsleeptime", true, 
+				"Specifies the sleep time for path edge collectors in seconds");
 
 		// Evaluation-specific options
 		options.addOption(OPTION_ANALYZE_FRAMEWORKS, "analyzeframeworks", false,
 				"Analyze the full frameworks together with the app without any optimizations");
+
+		// Callgraph-specific options
+		options.addOption(OPTION_CALLGRAPH_FILE, "callgraphdir", true,
+				"The file in which to store and from which to read serialized callgraphs");
+		options.addOption(OPTION_CALLGRAPH_ONLY, "callgraphonly", false, "Only compute the callgraph and terminate");
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -345,10 +362,6 @@ public class MainClass {
 				analyzer = createFlowDroidInstance(config);
 				analyzer.setTaintWrapper(taintWrapper);
 
-				// We need to inject the StubDroid hierarchy
-				if (taintWrapper instanceof SummaryTaintWrapper)
-					injectStubDroidHierarchy((SummaryTaintWrapper) taintWrapper);
-
 				// Start the data flow analysis
 				analyzer.runInfoflow();
 
@@ -366,59 +379,6 @@ public class MainClass {
 			System.err.println(String.format("The data flow analysis has failed. Error message: %s", e.getMessage()));
 			e.printStackTrace();
 		}
-	}
-
-	/**
-	 * Injects hierarchy data from StubDroid into Soot
-	 * 
-	 * @param taintWrapper The StubDroid instance
-	 */
-	private void injectStubDroidHierarchy(final SummaryTaintWrapper taintWrapper) {
-		final IMethodSummaryProvider provider = taintWrapper.getProvider();
-		analyzer.addPreprocessor(new PreAnalysisHandler() {
-
-			@Override
-			public void onBeforeCallgraphConstruction() {
-				// Inject the hierarchy
-				for (String className : provider.getAllClassesWithSummaries()) {
-					SootClass sc = Scene.v().forceResolve(className, SootClass.SIGNATURES);
-					if (sc.isPhantom()) {
-						ClassMethodSummaries summaries = provider.getClassFlows(className);
-						if (summaries != null) {
-							// Some phantom classes are actually interfaces
-							if (summaries.hasInterfaceInfo()) {
-								if (summaries.isInterface())
-									sc.setModifiers(sc.getModifiers() | Modifier.INTERFACE);
-								else
-									sc.setModifiers(sc.getModifiers() & ~Modifier.INTERFACE);
-							}
-
-							// Set the correct superclass
-							if (summaries.hasSuperclass()) {
-								final String superclassName = summaries.getSuperClass();
-								SootClass scSuperclass = Scene.v().forceResolve(superclassName, SootClass.SIGNATURES);
-								sc.setSuperclass(scSuperclass);
-							}
-
-							// Register the interfaces
-							if (summaries.hasInterfaces()) {
-								for (String intfName : summaries.getInterfaces()) {
-									SootClass scIntf = Scene.v().forceResolve(intfName, SootClass.SIGNATURES);
-									if (!sc.implementsInterface(intfName))
-										sc.addInterface(scIntf);
-								}
-							}
-						}
-					}
-				}
-			}
-
-			@Override
-			public void onAfterCallgraphConstruction() {
-				//
-			}
-
-		});
 	}
 
 	/**
@@ -635,6 +595,8 @@ public class MainClass {
 			return DataFlowSolver.FlowInsensitive;
 		else if (solver.equalsIgnoreCase("GC"))
 			return DataFlowSolver.GarbageCollecting;
+		else if (solver.equalsIgnoreCase("FPC"))
+			return DataFlowSolver.FineGrainedGC;
 		else {
 			System.err.println(String.format("Invalid data flow solver: %s", solver));
 			throw new AbortAnalysisException();
@@ -717,6 +679,17 @@ public class MainClass {
 			return StaticFieldTrackingMode.ContextFlowInsensitive;
 		else {
 			System.err.println(String.format("Invalid static flow tracking mode: %s", staticFlowMode));
+			throw new AbortAnalysisException();
+		}
+	}
+
+	private static DataFlowDirection parseDataFlowDirection(String dataflowDirection) {
+		if (dataflowDirection.equalsIgnoreCase("FORWARDS"))
+			return DataFlowDirection.Forwards;
+		else if (dataflowDirection.equalsIgnoreCase("BACKWARDS"))
+			return DataFlowDirection.Backwards;
+		else {
+			System.err.println(String.format("Invalid data flow direction: %s", dataflowDirection));
 			throw new AbortAnalysisException();
 		}
 	}
@@ -818,7 +791,7 @@ public class MainClass {
 		if (cmd.hasOption(OPTION_MERGE_DEX_FILES))
 			config.setMergeDexFiles(true);
 		if (cmd.hasOption(OPTION_PATH_SPECIFIC_RESULTS))
-			InfoflowConfiguration.setPathAgnosticResults(false);
+			config.setPathAgnosticResults(false);
 		if (cmd.hasOption(OPTION_SINGLE_JOIN_POINT))
 			config.getSolverConfiguration().setSingleJoinPointAbstraction(true);
 		{
@@ -830,6 +803,12 @@ public class MainClass {
 			Integer maxDepth = getIntOption(cmd, OPTION_MAX_CALLBACKS_DEPTH);
 			if (maxDepth != null)
 				config.getCallbackConfig().setMaxAnalysisCallbackDepth(maxDepth);
+		}
+		{
+			Integer maxthreadnum = getIntOption(cmd, OPTION_MAX_THREAD_NUMBER);
+			if (maxthreadnum != null) {
+				config.setMaxThreadNum(maxthreadnum);
+			}
 		}
 
 		// Inter-component communication
@@ -897,6 +876,11 @@ public class MainClass {
 			if (staticFlowMode != null && !staticFlowMode.isEmpty())
 				config.setStaticFieldTrackingMode(parseStaticFlowMode(staticFlowMode));
 		}
+		{
+			String dataflowDirection = cmd.getOptionValue(OPTION_DATA_FLOW_DIRECTION);
+			if (dataflowDirection != null && !dataflowDirection.isEmpty())
+				config.setDataFlowDirection(parseDataFlowDirection(dataflowDirection));
+		}
 
 		{
 			String[] toSkip = cmd.getOptionValues(OPTION_SKIP_APK_FILE);
@@ -911,6 +895,24 @@ public class MainClass {
 		if (cmd.hasOption(OPTION_ANALYZE_FRAMEWORKS)) {
 			config.setExcludeSootLibraryClasses(false);
 			config.setIgnoreFlowsInSystemPackages(false);
+		}
+
+		// Callgraph-specific options
+		if (cmd.hasOption(OPTION_CALLGRAPH_ONLY))
+			config.setTaintAnalysisEnabled(false);
+		{
+			String callgraphFile = cmd.getOptionValue(OPTION_CALLGRAPH_FILE);
+			if (callgraphFile != null && !callgraphFile.isEmpty()) {
+				config.getCallbackConfig().setSerializeCallbacks(true);
+				config.getCallbackConfig().setCallbacksFile(callgraphFile);
+			}
+		}
+
+		{
+			Integer sleepTime = getIntOption(cmd, OPTION_GC_SLEEP_TIME);
+			if (sleepTime != null) {
+				config.getSolverConfiguration().setSleepTime(sleepTime);
+			}
 		}
 	}
 

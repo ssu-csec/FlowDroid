@@ -12,7 +12,6 @@ import java.util.Set;
 import heros.solver.Pair;
 import soot.MethodOrMethodContext;
 import soot.PackManager;
-import soot.RefType;
 import soot.Scene;
 import soot.SceneTransformer;
 import soot.SootClass;
@@ -115,12 +114,10 @@ public class DefaultCallbackAnalyzer extends AbstractCallbackAnalyzer implements
 					reachableChangedListener = Scene.v().getReachableMethods().listener();
 					logger.info("Callback analysis done.");
 				} else {
-					// Incremental mode, only process the worklist
-					logger.info(String.format("Running incremental callback analysis for %d components...",
-							callbackWorklist.size()));
 					// Find the mappings between classes and layouts
 					findClassLayoutMappings();
 
+					// Add the methods that have become reachable in the views
 					MultiMap<SootMethod, SootClass> reverseViewCallbacks = new HashMultiMap<>();
 					for (Pair<SootClass, AndroidCallbackDefinition> i : viewCallbacks)
 						reverseViewCallbacks.put(i.getO2().getTargetMethod(), i.getO1());
@@ -131,6 +128,10 @@ public class DefaultCallbackAnalyzer extends AbstractCallbackAnalyzer implements
 							callbackWorklist.put(i, m);
 						}
 					}
+
+					// Incremental mode, only process the worklist
+					logger.info(String.format("Running incremental callback analysis for %d components...",
+							callbackWorklist.size()));
 
 					MultiMap<SootClass, SootMethod> workList = new HashMultiMap<>(callbackWorklist);
 					for (Iterator<SootClass> it = workList.keySet().iterator(); it.hasNext();) {
@@ -253,7 +254,6 @@ public class DefaultCallbackAnalyzer extends AbstractCallbackAnalyzer implements
 				continue;
 			if (SystemClassHandler.v().isClassInSystemPackage(sm.getDeclaringClass().getName()))
 				continue;
-			RefType fragmentType = RefType.v("android.app.Fragment");
 			for (Unit u : sm.retrieveActiveBody().getUnits()) {
 				if (u instanceof Stmt) {
 					Stmt stmt = (Stmt) u;

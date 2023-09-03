@@ -19,7 +19,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
@@ -29,6 +28,7 @@ import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import soot.jimple.infoflow.collect.ConcurrentHashSet;
 import soot.jimple.infoflow.methodSummary.data.summary.ClassMethodSummaries;
 import soot.jimple.infoflow.methodSummary.data.summary.ClassSummaries;
 import soot.jimple.infoflow.methodSummary.data.summary.MethodClear;
@@ -43,7 +43,7 @@ import soot.util.MultiMap;
  * This class loads method summary xml files.
  *
  */
-public abstract class XMLSummaryProvider implements IMethodSummaryProvider {
+public abstract class XMLSummaryProvider extends AbstractMethodSummaryProvider {
 
 	private final Logger logger = LoggerFactory.getLogger(getClass());
 
@@ -54,9 +54,9 @@ public abstract class XMLSummaryProvider implements IMethodSummaryProvider {
 
 	protected ClassSummaries summaries = createClassSummaries();
 
-	protected Set<String> loadedClasses = new HashSet<String>();
+	protected Set<String> loadedClasses = new ConcurrentHashSet<>();
 
-	protected Set<String> subsigMethodsWithSummaries = new HashSet<String>();
+	protected Set<String> subsigMethodsWithSummaries = new ConcurrentHashSet<String>();
 	protected boolean hasLoadingErrors;
 
 	protected XMLSummaryProvider() {
@@ -255,9 +255,10 @@ public abstract class XMLSummaryProvider implements IMethodSummaryProvider {
 	 * @param path  The path from which to load the summary
 	 */
 	protected void loadClass(String clazz, Path path) {
-		try (InputStream inputStream = Files.newInputStream(path, StandardOpenOption.READ)) {
+		try (InputStream inputStream = Files.newInputStream(path, StandardOpenOption.READ);
+				Reader rdr = new InputStreamReader(inputStream)) {
 			ClassMethodSummaries classSummaries = new ClassMethodSummaries(clazz);
-			summaryReader.read(new InputStreamReader(inputStream), classSummaries);
+			summaryReader.read(rdr, classSummaries);
 			addMethodSummaries(classSummaries);
 			onClassSummariesLoaded(clazz);
 		} catch (Exception e) {

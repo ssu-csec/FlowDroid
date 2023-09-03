@@ -323,6 +323,7 @@ public class MethodSourceSinkDefinition extends AbstractSourceSinkDefinition
 			Set<AccessPathTuple>[] paramAPTs, Set<AccessPathTuple> returnAPTs) {
 		MethodSourceSinkDefinition def = buildNewDefinition(method, baseAPTs, paramAPTs, returnAPTs, callType);
 		def.category = category;
+		def.conditions = conditions;
 		return def;
 	}
 
@@ -331,39 +332,6 @@ public class MethodSourceSinkDefinition extends AbstractSourceSinkDefinition
 			Set<AccessPathTuple> filteredReturnValues, CallType callType) {
 		return new MethodSourceSinkDefinition(methodAndclass, filteredBaseObjects, filteredParameters,
 				filteredReturnValues, callType);
-	}
-
-	@Override
-	@SuppressWarnings("unchecked")
-	public void merge(ISourceSinkDefinition other) {
-		if (other instanceof MethodSourceSinkDefinition) {
-			MethodSourceSinkDefinition otherMethod = (MethodSourceSinkDefinition) other;
-
-			// Merge the base object definitions
-			if (otherMethod.baseObjects != null && !otherMethod.baseObjects.isEmpty()) {
-				if (this.baseObjects == null)
-					this.baseObjects = new HashSet<>();
-				for (AccessPathTuple apt : otherMethod.baseObjects)
-					this.baseObjects.add(apt);
-			}
-
-			// Merge the parameter definitions
-			if (otherMethod.parameters != null && otherMethod.parameters.length > 0) {
-				if (this.parameters == null)
-					this.parameters = new Set[this.method.getParameters().size()];
-				for (int i = 0; i < otherMethod.parameters.length; i++) {
-					addParameterDefinition(i, otherMethod.parameters[i]);
-				}
-			}
-
-			// Merge the return value definitions
-			if (otherMethod.returnValues != null && !otherMethod.returnValues.isEmpty()) {
-				if (this.returnValues == null)
-					this.returnValues = new HashSet<>();
-				for (AccessPathTuple apt : otherMethod.returnValues)
-					this.returnValues.add(apt);
-			}
-		}
 	}
 
 	/**
@@ -582,6 +550,7 @@ public class MethodSourceSinkDefinition extends AbstractSourceSinkDefinition
 		MethodSourceSinkDefinition def = buildNewDefinition(method, filteredBaseObjects, filteredParameters,
 				filteredReturnValues, callType);
 		def.setCategory(category);
+		def.setConditions(conditions);
 		return def;
 	}
 

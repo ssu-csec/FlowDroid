@@ -47,6 +47,7 @@ import soot.toolkits.exceptions.ThrowableSet;
 import soot.toolkits.graph.DirectedGraph;
 import soot.toolkits.graph.ExceptionalUnitGraph;
 import soot.toolkits.graph.ExceptionalUnitGraph.ExceptionDest;
+import soot.toolkits.graph.MHGDominatorsFinder;
 import soot.toolkits.graph.MHGPostDominatorsFinder;
 
 /**
@@ -68,6 +69,22 @@ public class InfoflowCFG implements IInfoflowCFG {
 	protected final Map<SootMethod, Boolean> methodSideEffects = new ConcurrentHashMap<SootMethod, Boolean>();
 
 	protected final BiDiInterproceduralCFG<Unit, SootMethod> delegate;
+
+	protected final LoadingCache<Unit, UnitContainer> unitsToDominator = IDESolver.DEFAULT_CACHE_BUILDER
+			.build(new CacheLoader<Unit, UnitContainer>() {
+				@Override
+				public UnitContainer load(Unit unit) throws Exception {
+					SootMethod method = getMethodOf(unit);
+					DirectedGraph<Unit> graph = delegate.getOrCreateUnitGraph(method);
+
+					MHGDominatorsFinder<Unit> dominatorFinder = new MHGDominatorsFinder<Unit>(graph);
+					Unit dom = dominatorFinder.getImmediateDominator(unit);
+					if (dom == null)
+						return new UnitContainer(method);
+					else
+						return new UnitContainer(dom);
+				}
+			});
 
 	protected final LoadingCache<Unit, UnitContainer> unitToPostdominator = IDESolver.DEFAULT_CACHE_BUILDER
 			.build(new CacheLoader<Unit, UnitContainer>() {
@@ -146,10 +163,17 @@ public class InfoflowCFG implements IInfoflowCFG {
 		return unitToPostdominator.getUnchecked(u);
 	}
 
+	@Override
+	public UnitContainer getDominatorOf(Unit u) {
+		return unitsToDominator.getUnchecked(u);
+	}
+
 	// delegate methods follow
 
 	@Override
 	public SootMethod getMethodOf(Unit u) {
+		if (u == null)
+			throw new RuntimeException("Cannot get the method that contains a null unit");
 		return delegate.getMethodOf(u);
 	}
 
@@ -260,7 +284,7 @@ public class InfoflowCFG implements IInfoflowCFG {
 		return use == StaticFieldUse.Write || use == StaticFieldUse.ReadWrite || use == StaticFieldUse.Unknown;
 	}
 
-	protected synchronized StaticFieldUse checkStaticFieldUsed(SootMethod smethod, SootField variable) {
+	protected StaticFieldUse checkStaticFieldUsed(SootMethod smethod, SootField variable) {
 		// Skip over phantom methods
 		if (!smethod.isConcrete() || !smethod.hasActiveBody())
 			return StaticFieldUse.Unused;
@@ -359,8 +383,10 @@ public class InfoflowCFG implements IInfoflowCFG {
 		}
 
 		// Merge the temporary results into the global cache
-		for (Entry<SootMethod, StaticFieldUse> tempEntry : tempUses.entrySet()) {
-			registerStaticVariableUse(tempEntry.getKey(), variable, tempEntry.getValue());
+		synchronized (tempUses) {
+			for (Entry<SootMethod, StaticFieldUse> tempEntry : tempUses.entrySet()) {
+				registerStaticVariableUse(tempEntry.getKey(), variable, tempEntry.getValue());
+			}
 		}
 
 		StaticFieldUse outerUse = tempUses.get(smethod);
@@ -521,6 +547,16 @@ public class InfoflowCFG implements IInfoflowCFG {
 	}
 
 	@Override
+	public List<Unit> getConditionalBranchIntraprocedural(Unit callSite) {
+		return null;
+	}
+
+	@Override
+	public List<Unit> getConditionalBranchesInterprocedural(Unit unit) {
+		return null;
+	}
+
+	@Override
 	public boolean isReachable(Unit u) {
 		return delegate.isReachable(u);
 	}
@@ -601,6 +637,9 @@ public class InfoflowCFG implements IInfoflowCFG {
 
 		unitToPostdominator.invalidateAll();
 		unitToPostdominator.cleanUp();
+
+		unitsToDominator.invalidateAll();
+		unitsToDominator.cleanUp();
 	}
 
 }

@@ -9,6 +9,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import soot.jimple.infoflow.collect.ConcurrentHashSet;
 import soot.jimple.infoflow.methodSummary.data.summary.ClassMethodSummaries;
 import soot.jimple.infoflow.methodSummary.data.summary.ClassSummaries;
 
@@ -17,10 +20,11 @@ import soot.jimple.infoflow.methodSummary.data.summary.ClassSummaries;
  *
  */
 public class LazySummaryProvider extends XMLSummaryProvider {
+	private final Logger logger = LoggerFactory.getLogger(getClass());
 
 	protected Set<File> files = new HashSet<>();
 	protected Set<Path> pathes = new HashSet<>();
-	protected Set<String> loadableClasses = new HashSet<String>();
+	protected Set<String> loadableClasses = new ConcurrentHashSet<>();
 
 	/**
 	 * Loads a summary from a folder within the StubDroid jar file.
@@ -44,6 +48,8 @@ public class LazySummaryProvider extends XMLSummaryProvider {
 	 * @throws IOException
 	 */
 	public LazySummaryProvider(String folderInJar, Class<?> parentClass) throws URISyntaxException, IOException {
+		logger.warn("Lazy loading summaries from a jar/zip file might throw a ClosedChannelException. " +
+				"Use the EagerSummaryProvider instead.");
 		loadSummariesFromJAR(folderInJar, parentClass, p -> {
 			this.pathes.add(p);
 			loadableClasses.add(fileToClass(getFileName(p)));
@@ -142,7 +148,7 @@ public class LazySummaryProvider extends XMLSummaryProvider {
 
 	@Override
 	public ClassMethodSummaries getClassFlows(String className) {
-		if (loadableClasses != null && loadableClasses.contains(className))
+		if (loadableClasses != null && className != null && loadableClasses.contains(className))
 			loadClass(className);
 		return super.getClassFlows(className);
 	}

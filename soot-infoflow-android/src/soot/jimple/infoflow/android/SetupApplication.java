@@ -10,16 +10,40 @@
  ******************************************************************************/
 package soot.jimple.infoflow.android;
 
-import heros.solver.Pair;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.xml.stream.XMLStreamException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xml.sax.SAXException;
 import org.xmlpull.v1.XmlPullParserException;
-import soot.*;
+
+import heros.solver.Pair;
+import soot.G;
+import soot.Main;
+import soot.PackManager;
+import soot.Scene;
+import soot.SootClass;
+import soot.SootField;
+import soot.SootMethod;
+import soot.Unit;
 import soot.jimple.Stmt;
 import soot.jimple.infoflow.AbstractInfoflow;
+import soot.jimple.infoflow.BackwardsInfoflow;
 import soot.jimple.infoflow.IInfoflow;
 import soot.jimple.infoflow.Infoflow;
+import soot.jimple.infoflow.InfoflowConfiguration;
 import soot.jimple.infoflow.InfoflowConfiguration.SootIntegrationMode;
 import soot.jimple.infoflow.android.InfoflowAndroidConfiguration.CallbackConfiguration;
 import soot.jimple.infoflow.android.InfoflowAndroidConfiguration.IccConfiguration;
@@ -71,6 +95,7 @@ import soot.jimple.infoflow.memory.IMemoryBoundedSolver;
 import soot.jimple.infoflow.results.InfoflowPerformanceData;
 import soot.jimple.infoflow.results.InfoflowResults;
 import soot.jimple.infoflow.rifl.RIFLSourceSinkDefinitionProvider;
+import soot.jimple.infoflow.river.IUsageContextProvider;
 import soot.jimple.infoflow.solver.cfg.IInfoflowCFG;
 import soot.jimple.infoflow.solver.memory.IMemoryManager;
 import soot.jimple.infoflow.solver.memory.IMemoryManagerFactory;
@@ -87,11 +112,6 @@ import soot.jimple.toolkits.callgraph.Edge;
 import soot.options.Options;
 import soot.util.HashMultiMap;
 import soot.util.MultiMap;
-
-import javax.xml.stream.XMLStreamException;
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
 
 public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 
@@ -131,7 +151,9 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	protected Set<PreAnalysisHandler> preprocessors = new HashSet<>();
 	protected Set<ResultsAvailableHandler> resultsAvailableHandlers = new HashSet<>();
 	protected TaintPropagationHandler taintPropagationHandler = null;
-	protected TaintPropagationHandler backwardsPropagationHandler = null;
+	protected TaintPropagationHandler aliasPropagationHandler = null;
+
+	protected IUsageContextProvider usageContextProvider = null;
 
 	protected IInPlaceInfoflow infoflow = null;
 
@@ -144,9 +166,13 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	 */
 	private static class MultiRunResultAggregator implements ResultsAvailableHandler {
 
-		private final InfoflowResults aggregatedResults = new InfoflowResults();
+		private final InfoflowResults aggregatedResults;
 		private InfoflowResults lastResults = null;
 		private IInfoflowCFG lastICFG = null;
+
+		public MultiRunResultAggregator(boolean pathAgnosticResults) {
+			aggregatedResults = new InfoflowResults(pathAgnosticResults);
+		}
 
 		@Override
 		public void onResultsAvailable(IInfoflowCFG cfg, InfoflowResults results) {
@@ -366,8 +392,10 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	}
 
 	/**
-	 * Sets the class names of callbacks. If this value is null, it automatically
-	 * loads the names from AndroidCallbacks.txt as the default behavior.
+	 * Sets the class names of callbacks. hese are the callback classes defined by
+	 * the Android SDK, and they are not mapped to the current application. If this
+	 * value is null, FlowDroid automatically loads the names from
+	 * AndroidCallbacks.txt as the default behavior.
 	 * 
 	 * @param callbackClasses The class names of callbacks or null to use the
 	 *                        default file.
@@ -376,6 +404,12 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		this.callbackClasses = callbackClasses;
 	}
 
+	/**
+	 * Gets the class names of callbacks. These are the callback classes defined by
+	 * the Android SDK, and they are not mapped to the current application.
+	 * 
+	 * @return The class names of callbacks or null to use the default file.
+	 */
 	public Set<String> getCallbackClasses() {
 		return callbackClasses;
 	}
@@ -1329,6 +1363,45 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 
 	}
 
+	protected class InPlaceBackwardsInfoflow extends BackwardsInfoflow implements IInPlaceInfoflow {
+
+		/**
+		 * Creates a new instance of the Infoflow class for analyzing Android APK files.
+		 *
+		 * @param androidPath                 If forceAndroidJar is false, this is the
+		 *                                    base directory of the platform files in
+		 *                                    the Android SDK. If forceAndroidJar is
+		 *                                    true, this is the full path of a single
+		 *                                    android.jar file.
+		 * @param forceAndroidJar             True if a single platform JAR file shall
+		 *                                    be forced, false if Soot shall pick the
+		 *                                    appropriate platform version
+		 * @param icfgFactory                 The interprocedural CFG to be used by the
+		 *                                    InfoFlowProblem
+		 * @param additionalEntryPointMethods Additional methods generated by the entry
+		 *                                    point creator that are not directly entry
+		 *                                    ypoints on their own
+		 */
+		public InPlaceBackwardsInfoflow(String androidPath, boolean forceAndroidJar, BiDirICFGFactory icfgFactory,
+				Collection<SootMethod> additionalEntryPointMethods) {
+			super(androidPath, forceAndroidJar, icfgFactory);
+			this.additionalEntryPointMethods = additionalEntryPointMethods;
+		}
+
+		@Override
+		public void runAnalysis(final ISourceSinkManager sourcesSinks, SootMethod entryPoint) {
+			this.dummyMainMethod = entryPoint;
+			super.runAnalysis(sourcesSinks);
+		}
+
+		@Override
+		protected boolean isUserCodeClass(String className) {
+			String packageName = manifest.getPackageName() + ".";
+			return super.isUserCodeClass(className) || className.startsWith(packageName);
+		}
+
+	}
+
 	/**
 	 * Constructs a callgraph only without running the actual data flow analysis. If
 	 * you want to run a data flow analysis, do not call this method. Instead, call
@@ -1486,7 +1559,7 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 			throw new RuntimeException("Parse app resource failed", e);
 		}
 
-		MultiRunResultAggregator resultAggregator = new MultiRunResultAggregator();
+		MultiRunResultAggregator resultAggregator = new MultiRunResultAggregator(config.getPathAgnosticResults());
 
 		// We need at least one entry point
 		if (entrypoints == null || entrypoints.isEmpty()) {
@@ -1613,17 +1686,19 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	 * @param cfg     The control flow graph to use for writing out the results
 	 */
 	protected void serializeResults(InfoflowResults results, IInfoflowCFG cfg) {
-		String resultsFile = config.getAnalysisFileConfig().getOutputFile();
-		if (resultsFile != null && !resultsFile.isEmpty()) {
-			InfoflowResultsSerializer serializer = new InfoflowResultsSerializer(cfg, config);
-			try {
-				serializer.serialize(results, resultsFile);
-			} catch (IOException ex) {
-				System.err.println("Could not write data flow results to file: " + ex.getMessage());
-				ex.printStackTrace();
-			} catch (XMLStreamException ex) {
-				System.err.println("Could not write data flow results to file: " + ex.getMessage());
-				ex.printStackTrace();
+		if (results != null && !results.isEmpty()) {
+			String resultsFile = config.getAnalysisFileConfig().getOutputFile();
+			if (resultsFile != null && !resultsFile.isEmpty()) {
+				InfoflowResultsSerializer serializer = new InfoflowResultsSerializer(cfg, config);
+				try {
+					serializer.serialize(results, resultsFile);
+				} catch (IOException ex) {
+					System.err.println("Could not write data flow results to file: " + ex.getMessage());
+					ex.printStackTrace();
+				} catch (XMLStreamException ex) {
+					System.err.println("Could not write data flow results to file: " + ex.getMessage());
+					ex.printStackTrace();
+				}
 			}
 		}
 	}
@@ -1652,13 +1727,15 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 
 		// Initialize and configure the data flow tracker
 		IInPlaceInfoflow info = createInfoflowInternal(lifecycleMethods);
+
 		if (ipcManager != null)
 			info.setIPCManager(ipcManager);
 		info.setConfig(config);
 		info.setSootConfig(sootConfig);
 		info.setTaintWrapper(taintWrapper);
 		info.setTaintPropagationHandler(taintPropagationHandler);
-		info.setBackwardsPropagationHandler(backwardsPropagationHandler);
+		info.setAliasPropagationHandler(aliasPropagationHandler);
+		info.setUsageContextProvider(usageContextProvider);
 
 		// We use a specialized memory manager that knows about Android
 		info.setMemoryManagerFactory(new IMemoryManagerFactory() {
@@ -1673,7 +1750,7 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		info.setMemoryManagerFactory(null);
 
 		// Inject additional post-processors
-		info.setPostProcessors(Collections.singleton(new PostAnalysisHandler() {
+		info.addPostProcessor(new PostAnalysisHandler() {
 
 			@Override
 			public InfoflowResults onResultsAvailable(InfoflowResults results, IInfoflowCFG cfg) {
@@ -1687,7 +1764,7 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 				return results;
 			}
 
-		}));
+		});
 
 		return info;
 	}
@@ -1701,6 +1778,8 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	 */
 	protected IInPlaceInfoflow createInfoflowInternal(Collection<SootMethod> lifecycleMethods) {
 		final String androidJar = config.getAnalysisFileConfig().getAndroidPlatformDir();
+		if (config.getDataFlowDirection() == InfoflowConfiguration.DataFlowDirection.Backwards)
+			return new InPlaceBackwardsInfoflow(androidJar, forceAndroidJar, cfgFactory, lifecycleMethods);
 		return new InPlaceInfoflow(androidJar, forceAndroidJar, cfgFactory, lifecycleMethods);
 	}
 
@@ -1908,14 +1987,14 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 	}
 
 	/**
-	 * Sets the backwards propagation handler, which will be notified when the alias
+	 * Sets the alias propagation handler, which will be notified when the alias
 	 * analysis processes an edge. Use this callback if you need a hook into the
 	 * low-level alias analysis.
 	 * 
-	 * @param backwardsPropagationHandler The propagation handler to register
+	 * @param aliasPropagationHandler The propagation handler to register
 	 */
-	public void setBackwardsPropagationHandler(TaintPropagationHandler backwardsPropagationHandler) {
-		this.backwardsPropagationHandler = backwardsPropagationHandler;
+	public void setAliasPropagationHandler(TaintPropagationHandler aliasPropagationHandler) {
+		this.aliasPropagationHandler = aliasPropagationHandler;
 	}
 
 	/**
@@ -1952,4 +2031,7 @@ public class SetupApplication implements ITaintWrapperDataFlowAnalysis {
 		}
 	}
 
+	public void setUsageContextProvider(IUsageContextProvider usageContextProvider) {
+		this.usageContextProvider = usageContextProvider;
+	}
 }

@@ -13,7 +13,7 @@ import soot.options.Options;
  * @author Steven Arzt
  *
  */
-public class SummaryInfoflow extends Infoflow {
+public class SummaryInfoflow extends Infoflow implements ISummaryInfoflow {
 
 	private InfoflowManager cachedManager = null;
 	private String libPath;
@@ -34,7 +34,8 @@ public class SummaryInfoflow extends Infoflow {
 	}
 
 	@Override
-	protected void onTaintPropagationCompleted(IInfoflowSolver forwardSolver, IInfoflowSolver backwardSolver) {
+	protected void onTaintPropagationCompleted(IInfoflowSolver forwardSolver, IInfoflowSolver aliasSolver,
+											   IInfoflowSolver backwardSolver, IInfoflowSolver backwardAliasSolver) {
 		cachedManager = this.manager;
 	}
 

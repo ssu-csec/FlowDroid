@@ -11,11 +11,15 @@ import javax.xml.stream.XMLStreamWriter;
 import soot.jimple.Stmt;
 import soot.jimple.infoflow.InfoflowConfiguration;
 import soot.jimple.infoflow.data.AccessPath;
+import soot.jimple.infoflow.data.AccessPathFragment;
+import soot.jimple.infoflow.data.SootMethodAndClass;
 import soot.jimple.infoflow.results.InfoflowPerformanceData;
 import soot.jimple.infoflow.results.InfoflowResults;
 import soot.jimple.infoflow.results.ResultSinkInfo;
 import soot.jimple.infoflow.results.ResultSourceInfo;
 import soot.jimple.infoflow.solver.cfg.IInfoflowCFG;
+import soot.jimple.infoflow.sourcesSinks.definitions.ISourceSinkDefinition;
+import soot.jimple.infoflow.sourcesSinks.definitions.MethodSourceSinkDefinition;
 
 /**
  * Class for serializing FlowDroid results to XML
@@ -203,6 +207,12 @@ public class InfoflowResultsSerializer {
 					source.getDefinition().getCategory().getHumanReadableDescription());
 		if (icfg != null)
 			writer.writeAttribute(XmlConstants.Attributes.method, icfg.getMethodOf(source.getStmt()).getSignature());
+		ISourceSinkDefinition def = source.getDefinition();
+		if (def instanceof MethodSourceSinkDefinition) {
+			MethodSourceSinkDefinition ms = (MethodSourceSinkDefinition) def;
+			if (ms.getMethod() != null)
+				writer.writeAttribute(XmlConstants.Attributes.methodSourceSinkDefinition, ms.getMethod().getSignature());
+		}
 
 		writeAdditionalSourceInfo(source, writer);
 		writeAccessPath(source.getAccessPath(), writer);
@@ -260,6 +270,12 @@ public class InfoflowResultsSerializer {
 					sink.getDefinition().getCategory().getHumanReadableDescription());
 		if (icfg != null)
 			writer.writeAttribute(XmlConstants.Attributes.method, icfg.getMethodOf(sink.getStmt()).getSignature());
+		ISourceSinkDefinition def = sink.getDefinition();
+		if (def instanceof MethodSourceSinkDefinition) {
+			MethodSourceSinkDefinition ms = (MethodSourceSinkDefinition) def;
+			if (ms.getMethod() != null)
+				writer.writeAttribute(XmlConstants.Attributes.methodSourceSinkDefinition, ms.getMethod().getSignature());
+		}
 		writeAdditionalSinkInfo(sink, writer);
 		writeAccessPath(sink.getAccessPath(), writer);
 		writer.writeEndElement();
@@ -295,12 +311,13 @@ public class InfoflowResultsSerializer {
 				accessPath.getTaintSubFields() ? XmlConstants.Values.TRUE : XmlConstants.Values.FALSE);
 
 		// Write out the fields
-		if (accessPath.getFieldCount() > 0) {
+		if (accessPath.getFragmentCount() > 0) {
 			writer.writeStartElement(XmlConstants.Tags.fields);
-			for (int i = 0; i < accessPath.getFieldCount(); i++) {
+			for (int i = 0; i < accessPath.getFragmentCount(); i++) {
 				writer.writeStartElement(XmlConstants.Tags.field);
-				writer.writeAttribute(XmlConstants.Attributes.value, accessPath.getFields()[i].toString());
-				writer.writeAttribute(XmlConstants.Attributes.type, accessPath.getFieldTypes()[i].toString());
+				AccessPathFragment fragment = accessPath.getFragments()[i];
+				writer.writeAttribute(XmlConstants.Attributes.value, fragment.getField().toString());
+				writer.writeAttribute(XmlConstants.Attributes.type, fragment.getFieldType().toString());
 				writer.writeEndElement();
 			}
 			writer.writeEndElement();

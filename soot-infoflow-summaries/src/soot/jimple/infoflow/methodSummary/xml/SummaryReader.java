@@ -90,6 +90,10 @@ public class SummaryReader extends AbstractXMLReader {
 					// not call setInterface()!
 					if (isInterface != null && !isInterface.isEmpty())
 						summaries.setInterface(isInterface.equals(XMLConstants.VALUE_TRUE));
+
+					String isExclusive = getAttributeByName(xmlreader, XMLConstants.ATTRIBUTE_IS_EXCLUSIVE);
+					if (isExclusive != null && !isExclusive.isEmpty())
+						summaries.setExclusiveForClass(isExclusive.equals(XMLConstants.VALUE_TRUE));
 				} else if (localName.equals(XMLConstants.TREE_METHODS) && xmlreader.isStartElement()) {
 					if (state == State.summary)
 						state = State.methods;
@@ -98,6 +102,12 @@ public class SummaryReader extends AbstractXMLReader {
 				} else if (localName.equals(TREE_METHOD) && xmlreader.isStartElement()) {
 					if (state == State.methods) {
 						currentMethod = getAttributeByName(xmlreader, XMLConstants.ATTRIBUTE_METHOD_SIG);
+
+						// Some summaries are full signatures instead of subsignatures. We fix this on
+						// the fly.
+						if (currentMethod.contains(":"))
+							currentMethod = currentMethod.substring(currentMethod.indexOf(":") + 1);
+
 						String sIsExcluded = getAttributeByName(xmlreader, XMLConstants.ATTRIBUTE_IS_EXCLUDED);
 						if (sIsExcluded != null && sIsExcluded.equals(XMLConstants.VALUE_TRUE))
 							summary.addExcludedMethod(currentMethod);
@@ -243,8 +253,6 @@ public class SummaryReader extends AbstractXMLReader {
 
 	public void read(File fileName, ClassMethodSummaries summaries)
 			throws XMLStreamException, SummaryXMLException, IOException {
-		if (fileName.getName().contains("ByteArrayInputS"))
-			System.out.println();
 		if (validateSummariesOnRead) {
 			try (FileReader rdr = new FileReader(fileName)) {
 				if (!verifyXML(rdr, XSD_FILE_PATH)) {

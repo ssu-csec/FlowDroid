@@ -1,18 +1,8 @@
 package soot.jimple.infoflow.methodSummary.generator;
 
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
-import soot.BooleanType;
-import soot.IntType;
-import soot.Scene;
-import soot.SootMethod;
-import soot.SootMethodRef;
-import soot.Type;
-import soot.Value;
+import soot.*;
 import soot.jimple.DefinitionStmt;
 import soot.jimple.InstanceInvokeExpr;
 import soot.jimple.InvokeExpr;
@@ -21,12 +11,15 @@ import soot.jimple.infoflow.InfoflowManager;
 import soot.jimple.infoflow.data.Abstraction;
 import soot.jimple.infoflow.data.AccessPath;
 import soot.jimple.infoflow.data.SourceContext;
+import soot.jimple.infoflow.handlers.PreAnalysisHandler;
 import soot.jimple.infoflow.methodSummary.data.sourceSink.FlowSource;
 import soot.jimple.infoflow.methodSummary.data.summary.GapDefinition;
 import soot.jimple.infoflow.methodSummary.data.summary.MethodSummaries;
 import soot.jimple.infoflow.methodSummary.data.summary.SourceSinkType;
+import soot.jimple.infoflow.methodSummary.generator.SummaryGeneratorConfiguration.TaintCondition;
 import soot.jimple.infoflow.methodSummary.generator.gaps.IGapManager;
 import soot.jimple.infoflow.methodSummary.util.AliasUtils;
+import soot.jimple.infoflow.sourcesSinks.definitions.ISourceSinkDefinition;
 import soot.jimple.infoflow.taintWrappers.ITaintPropagationWrapper;
 import soot.jimple.toolkits.callgraph.Edge;
 
@@ -53,6 +46,11 @@ public class SummaryGenerationTaintWrapper implements ITaintPropagationWrapper {
 	@Override
 	public void initialize(InfoflowManager manager) {
 		this.manager = manager;
+	}
+
+	@Override
+	public Collection<PreAnalysisHandler> getPreAnalysisHandlers() {
+		return Collections.emptyList();
 	}
 
 	@Override
@@ -107,10 +105,10 @@ public class SummaryGenerationTaintWrapper implements ITaintPropagationWrapper {
 	}
 
 	/**
-	 * Gets the taints for hashCode() and equals() methods if the summary generator
-	 * is configured to not summarizes these methods
+	 * Gets the taints for hashCode() and equals() and other methods with default
+	 * taints if the summary generator is configured to not summarizes these methods
 	 * 
-	 * @param stmt        The statement that might call hashCode() and equals()
+	 * @param stmt        The statement that might call a method with default taint
 	 * @param taintedPath The incoming taint abstraction
 	 * @return The taint abstractions with which to continue the data flow analysis,
 	 *         or <code>null</code> if this method does not model the call. If the
@@ -121,41 +119,36 @@ public class SummaryGenerationTaintWrapper implements ITaintPropagationWrapper {
 		final InvokeExpr iexpr = stmt.getInvokeExpr();
 		final SummaryGeneratorConfiguration config = (SummaryGeneratorConfiguration) manager.getConfig();
 
-		// hashCode() and equals() are always virtual calls
+		// The calls to methods with default taints are always virtual calls
 		if (iexpr instanceof InstanceInvokeExpr && !config.getSummarizeHashCodeEquals()) {
 			SootMethodRef ref = iexpr.getMethodRef();
 			InstanceInvokeExpr iiexpr = (InstanceInvokeExpr) iexpr;
 			AccessPath ap = taintedPath.getAccessPath();
 
-			// Check for hashCode()
-			if (ref.getName().equals("hashCode") && ref.getParameterTypes().isEmpty()
-					&& ref.getReturnType() instanceof IntType) {
-				if (ap.getPlainValue() == iiexpr.getBase()) {
-					// If the return value is used, we taint it
-					if (stmt instanceof DefinitionStmt) {
-						DefinitionStmt defStmt = (DefinitionStmt) stmt;
-						return Collections.singleton(taintedPath.deriveNewAbstraction(
-								manager.getAccessPathFactory().createAccessPath(defStmt.getLeftOp(), false), stmt));
-					}
+			TaintCondition taintCondition = config.getDefaultTaints().get(ref.getSubSignature().toString());
+			if (taintCondition != null) {
+				final Set<Abstraction> taints = new HashSet<Abstraction>();
 
-					// The return value is apparently ignored
-					return Collections.emptySet();
-				}
-			}
+				// We always keep the incoming taint
+				taints.add(taintedPath);
 
-			// Check for equals()
-			List<Type> params = ref.getParameterTypes();
-			if (ref.getName().equals("equals") && params.size() == 1 && params.get(0).equals(Scene.v().getObjectType())
-					&& ref.getReturnType() == BooleanType.v()) {
-				// If the return value is used, we taint it
-				if (config.getImplicitFlowMode().trackControlFlowDependencies() && stmt instanceof DefinitionStmt) {
+				if (stmt instanceof DefinitionStmt) {
 					DefinitionStmt defStmt = (DefinitionStmt) stmt;
-					return Collections.singleton(taintedPath.deriveNewAbstraction(
-							manager.getAccessPathFactory().createAccessPath(defStmt.getLeftOp(), false), stmt));
+
+					// Taint the return value only if the incoming tainted path is part of the
+					// invoke expression
+					if (ap.getPlainValue() == iiexpr.getBase() || iiexpr.getArgs().contains(ap.getPlainValue())) {
+
+						// If the taint condition is fulfilled, the return value is tainted
+						if (taintCondition.equals(TaintCondition.TaintAlways)
+								|| (taintCondition.equals(TaintCondition.TaintOnImplicit)
+										&& config.getImplicitFlowMode().trackControlFlowDependencies()))
+							taints.add(taintedPath.deriveNewAbstraction(
+									manager.getAccessPathFactory().createAccessPath(defStmt.getLeftOp(), false), stmt));
+					}
 				}
 
-				// The return value is apparently ignored
-				return Collections.emptySet();
+				return taints;
 			}
 		}
 
@@ -181,7 +174,7 @@ public class SummaryGenerationTaintWrapper implements ITaintPropagationWrapper {
 		newOutAbs.setPredecessor(null);
 
 		// If no longer have a predecessor, we must fake a source context
-		newOutAbs.setSourceContext(new SourceContext(null, accessPath, stmt, getFlowSource(accessPath, stmt, gap)));
+		newOutAbs.setSourceContext(new SourceContext((Collection<ISourceSinkDefinition>) null, accessPath, stmt, getFlowSource(accessPath, stmt, gap)));
 
 		return newOutAbs;
 	}

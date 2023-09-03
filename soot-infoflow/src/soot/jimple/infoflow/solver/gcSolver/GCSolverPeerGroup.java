@@ -1,6 +1,6 @@
 package soot.jimple.infoflow.solver.gcSolver;
 
-import soot.jimple.infoflow.solver.SolverPeerGroup;
+import soot.jimple.infoflow.solver.DefaultSolverPeerGroup;
 
 /**
  * Specialized solver peer group for garbage-collecting solvers
@@ -8,9 +8,9 @@ import soot.jimple.infoflow.solver.SolverPeerGroup;
  * @author Steven Arzt
  *
  */
-public class GCSolverPeerGroup extends SolverPeerGroup {
+public class GCSolverPeerGroup<A> extends DefaultSolverPeerGroup {
 
-	private GarbageCollectorPeerGroup gcPeerGroup = null;
+	private GarbageCollectorPeerGroup<A> gcPeerGroup = null;
 
 	public GCSolverPeerGroup() {
 	}
@@ -20,9 +20,9 @@ public class GCSolverPeerGroup extends SolverPeerGroup {
 	 * 
 	 * @return The garbage collector peer group
 	 */
-	public GarbageCollectorPeerGroup getGCPeerGroup() {
+	public GarbageCollectorPeerGroup<A> getGCPeerGroup() {
 		if (gcPeerGroup == null)
-			gcPeerGroup = new GarbageCollectorPeerGroup();
+			gcPeerGroup = new GarbageCollectorPeerGroup<>();
 		return gcPeerGroup;
 	}
 
